@@ -1,0 +1,25 @@
+main{
+  padding: 10px;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+header{
+  display:flex;
+  justify-content: space-between;
+  margin-bottom: 50px;
+}
+
+header a{
+  text-decoration: none;
+  color: #333;
+}
+
+header a.logo{
+  font-weight: bold;
+}
+
+header nav{
+  display: flex;
+  gap: 20px;
+}
