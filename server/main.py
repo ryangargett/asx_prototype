@@ -45,6 +45,10 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
     
 @app.get("/")
 async def read_root():
@@ -57,9 +61,9 @@ def validate_request(request: RegisterRequest) -> None:
         request (RegisterRequest): request object containing username, email and password
     """
     
-    validate_password(request.password)
-    validate_username(request.username)
-    validate_email(request.email)
+    _validate_password(request.password)
+    _validate_username(request.username)
+    _validate_email(request.email)
 
 def _validate_password(password: str) -> None:
     
@@ -128,10 +132,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 @app.post("/register")
 async def register(request: RegisterRequest):
     
-    # ensure provided password is valid before registering user
-    validate_password(request.password)
-    validate_username(request.username)
-    validate_email(request.email)
+    # validate incoming request
+    validate_request(request)
 
     users.insert_one({
         "username": request.username,
@@ -144,6 +146,24 @@ async def register(request: RegisterRequest):
         return {"message": "User registered successfully"}
     else:
         raise HTTPException(status_code=500, detail="User registration failed")
+    
+@app.post("/login")
+async def login(request: RegisterRequest):
+
+    user = users.find_one({"username": request.username})
+    
+    if not user:
+        # try email address as well
+        user = users.find_one({"email": request.email})
+        
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid username or email")
+        
+    if not verify_password(request.password, user["password"]):
+        raise HTTPException(status_code=400, detail="Invalid password")
+    
+    return {"message": "Login successful"}
+        
     
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
