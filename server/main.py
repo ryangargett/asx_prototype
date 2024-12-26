@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, APIRouter, Query
+from fastapi import FastAPI, HTTPException, APIRouter, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -157,8 +157,8 @@ async def register(request: RegisterRequest) -> dict:
     else:
         raise HTTPException(status_code=500, detail="User registration failed")
     
-@app.post("/login")
-async def login(request: LoginRequest) -> AuthToken:
+@app.post("/token", response_model = AuthToken)
+async def login(request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
     user = users.find_one({"username": request.username})
     
     print(user)
@@ -193,7 +193,7 @@ def verify_token(token: str):
         raise HTTPException(status_code=403, detail="Invalid token")
 
 @app.get("/verify")
-async def verify_user(token: str = Query(...)) -> dict:
+async def verify_user(token: str = Depends(auth_schema)) -> dict:
     payload = verify_token(token)
     username = payload.get("sub")
     return {"message": "Token verified", "username": username}
