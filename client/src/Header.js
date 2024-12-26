@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useState} from "react";
+import {useEffect, useState} from "react";
 import {Link, useNavigate} from 'react-router-dom';
 import axios from "axios";
 
@@ -7,9 +7,9 @@ export default function Header() {
     const [username, setUsername] = useState(null);
     const navigate = useNavigate();
 
-    const verifyToken = useCallback(async () => {
+    async function verifyToken() {
         const token = localStorage.getItem("token");
-        alert(token);
+        console.log("Token", token);
         if (token) {
             try {
                 // Verify the token
@@ -18,10 +18,8 @@ export default function Header() {
                         'Authorization': `Bearer ${token}`
                     }
                 });
-
                 alert(response.data.message);
                 setUsername(response.data.username);
-                navigate("/");
             } catch (error) {
                 localStorage.removeItem("token");
                 alert("Authentication failed, please login");
@@ -31,11 +29,14 @@ export default function Header() {
             alert("An unexpected error occured, please login");
             navigate("/login");
         }
-    }, [navigate]);
-
+    }
     useEffect(() => {
-        verifyToken();
-    }, [verifyToken]);
+        const token = localStorage.getItem("token");
+        if (token) {
+            verifyToken();
+        }
+    }, []);
+
 
     return (    
         <header>

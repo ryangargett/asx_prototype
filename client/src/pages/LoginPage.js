@@ -10,12 +10,18 @@ export default function LoginPage() {
     async function attemptLogin(ev) {
         ev.preventDefault();
         try {
-            const response = await axios.post("http://localhost:8000/token", {
-                username,
-                password
+            const params = new URLSearchParams();
+            params.append('username', username);
+            params.append('password', password);
+
+            const response = await axios.post("http://localhost:8000/token", params, {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
             });
             alert(response.data.message);
             localStorage.setItem("token", response.data.access_token);
+            console.log("Token", response.data.access_token);
             // Redirect to the home page if login successful
             navigate("/")
 
@@ -29,7 +35,7 @@ export default function LoginPage() {
     }
 
     return (
-        <form className = "login" onSubmit={attemptLogin}>
+        <form className="login" onSubmit={attemptLogin}>
             <h1>Login</h1>
             <input type="text" 
                 placeholder="Username"
