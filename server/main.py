@@ -8,6 +8,8 @@ from decouple import config
 from password_strength import PasswordPolicy
 from pymongo import MongoClient
 
+import bcrypt
+
 app = FastAPI()
 
 client = MongoClient(config("MONGODB_KEY"))
@@ -80,6 +82,21 @@ def validate_username(username: str) -> None:
     if user:
         raise HTTPException(status_code=400, detail="Username already registered, please login")
     
+def encrypt_password(password: str) -> str:
+    
+    """Encrypts a provided password using bcrypt
+    """
+    
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    
+    """Verifies a provided password against the hashed password stored in the database
+    """
+    
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password)    
+    
 @app.post("/register")
 async def register(request: RegisterRequest):
     
@@ -89,7 +106,7 @@ async def register(request: RegisterRequest):
 
     users.insert_one({
         "username": request.username,
-        "password": request.password
+        "password": encrypt_password(request.password)
     })
     
     # Check if user was successfully registered
@@ -101,5 +118,3 @@ async def register(request: RegisterRequest):
     
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
-#
