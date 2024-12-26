@@ -19,13 +19,26 @@ export default function Header() {
                 setUsername(response.data.username);
             } catch (error) {
                 alert("Authentication failed, please login");
-                navigate("/login");
             }
         } else {
             alert("An unexpected error occured, please login");
             navigate("/login");
         }
     }
+
+    async function logoutUser() {
+        try {
+            const response = await axios.post("http://localhost:8000/logout", {}, {
+                withCredentials: true
+            });
+            alert(response.data.message);
+            setUsername(null);
+            navigate("/");
+        } catch (error) {
+            alert("An unexpected error occurred");
+        }
+    }
+
     useEffect(() => {
         verifyToken();
     }, []);
@@ -38,6 +51,7 @@ export default function Header() {
                 {username && (
                     <>
                         <Link to="/profile">{username}</Link>
+                        <Link to="/" onClick={logoutUser}>Logout</Link>
                     </>
                 )}
                 {!username && (

@@ -4,7 +4,7 @@ import uvicorn
 
 from fastapi import FastAPI, HTTPException, Depends, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
 from email_validator import validate_email, EmailNotValidError
@@ -15,7 +15,6 @@ from passlib.context import CryptContext
 from pymongo import MongoClient
 
 app = FastAPI()
-auth_schema = OAuth2PasswordBearer(tokenUrl="token")
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 client = MongoClient(config("MONGODB_KEY"))
@@ -59,6 +58,20 @@ class AuthToken(BaseModel):
     message: str
     access_token: str
     token_type: str
+    
+def generate_token(username: str, expiry: int) -> str:
+    encode = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
+    return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=403, detail="Invalid token")
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Invalid token")
     
 @app.get("/")
 async def read_root():
@@ -157,7 +170,7 @@ async def register(request: RegisterRequest) -> dict:
     else:
         raise HTTPException(status_code=500, detail="User registration failed")
     
-@app.post("/token", response_model = AuthToken)
+@app.post("/login", response_model = AuthToken)
 async def login(response: Response, request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
     user = users.find_one({"username": request.username})
     
@@ -179,19 +192,10 @@ async def login(response: Response, request: OAuth2PasswordRequestForm = Depends
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
-def generate_token(username: str, expiry: int) -> str:
-    encode = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
-    return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
-
-def verify_token(token: str):
-    try:
-        payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
-        username = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=403, detail="Invalid token")
-        return payload
-    except JWTError:
-        raise HTTPException(status_code=403, detail="Invalid token")
+@app.post("/logout")
+async def logout(response: Response) -> dict:
+    response.delete_cookie("auth_token")
+    return {"message": "Logged out successfully"}
 
 @app.get("/verify")
 async def verify_user(request: Request) -> dict:
