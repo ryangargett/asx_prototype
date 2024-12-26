@@ -1,17 +1,22 @@
+from datetime import datetime, timedelta
+
 import uvicorn
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from pydantic import BaseModel
 
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
 from password_strength import PasswordPolicy
+from passlib.context import CryptContext
 from pymongo import MongoClient
 
-import bcrypt
-
 app = FastAPI()
+auth_schema = OAuth2PasswordBearer(tokenUrl="token")
+encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 client = MongoClient(config("MONGODB_KEY"))
 
@@ -35,7 +40,7 @@ pwd_policy = PasswordPolicy.from_names(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # update once domain is known
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,6 +54,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    
+class AuthToken(BaseModel):
+    access_token: str
+    token_type: str
     
 @app.get("/")
 async def read_root():
@@ -116,18 +125,17 @@ def _validate_email(email: str) -> None:
 
 def encrypt_password(password: str) -> str:
     
-    """Encrypts a provided password using bcrypt
+    """Encrypts a provided password
     """
     
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode("utf-8"), salt)
+    return encrypter.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     
     """Verifies a provided password against the hashed password stored in the database
     """
     
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password)    
+    return encrypter.verify(plain_password, hashed_password)
     
 @app.post("/register")
 async def register(request: RegisterRequest):
@@ -157,7 +165,7 @@ async def login(request: LoginRequest):
     
     if not user:
         # try email address as well
-        user = users.find_one({"email": request.email})
+        user = users.find_one({"email": request.username})
         
         if not user:
             raise HTTPException(status_code=400, detail="Invalid username or email")
@@ -168,7 +176,6 @@ async def login(request: LoginRequest):
         raise HTTPException(status_code=400, detail="Invalid password")
     
     return {"message": "Login successful"}
-        
-    
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

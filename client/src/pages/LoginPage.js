@@ -1,9 +1,11 @@
 import {useState} from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [redirect, setRedirect] = useState(false);
 
     async function attemptLogin(ev) {
         ev.preventDefault();
@@ -13,6 +15,10 @@ export default function LoginPage() {
                 password
             });
             alert(response.data.message);
+
+            // Redirect to the home page if login successful
+            setRedirect(true);
+
         } catch (error) {
             if (error.response && error.response.data && error.response.data.detail) {
                 alert(error.response.data.detail);
@@ -22,6 +28,10 @@ export default function LoginPage() {
         }
     }
 
+    if (redirect) {
+        return <Navigate to={"/"} />;
+    }
+    
     return (
         <form className = "login" onSubmit={attemptLogin}>
             <h1>Login</h1>
