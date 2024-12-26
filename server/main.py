@@ -21,6 +21,7 @@ except Exception as e:
 
 db = client["main"]
 users = db["users"]
+users.delete_many({})
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -69,11 +70,22 @@ def validate_password(password: str) -> None:
         error_msg = ", ".join(error_msg)
         raise HTTPException(status_code=400, detail=error_msg)
     
+def validate_username(username: str) -> None:
+    
+    """Ensures a provided username does not already exist in the collection
+    """
+    
+    user = users.find_one({"username": username})
+    
+    if user:
+        raise HTTPException(status_code=400, detail="Username already registered, please login")
+    
 @app.post("/register")
 async def register(request: RegisterRequest):
     
     # ensure provided password is valid before registering user
     validate_password(request.password)
+    validate_username(request.username)
 
     users.insert_one({
         "username": request.username,
