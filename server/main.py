@@ -1,15 +1,15 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
 from pydantic import BaseModel
 
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
+from jose import jwt, JWTError
 from password_strength import PasswordPolicy
 from passlib.context import CryptContext
 from pymongo import MongoClient
@@ -29,7 +29,7 @@ except Exception as e:
 
 db = client["main"]
 users = db["users"]
-users.delete_many({})
+#users.delete_many({})
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -56,6 +56,7 @@ class LoginRequest(BaseModel):
     password: str
     
 class AuthToken(BaseModel):
+    message: str
     access_token: str
     token_type: str
     
@@ -138,7 +139,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return encrypter.verify(plain_password, hashed_password)
     
 @app.post("/register")
-async def register(request: RegisterRequest):
+async def register(request: RegisterRequest) -> dict:
     
     # validate incoming request
     validate_request(request)
@@ -157,8 +158,7 @@ async def register(request: RegisterRequest):
         raise HTTPException(status_code=500, detail="User registration failed")
     
 @app.post("/login")
-async def login(request: LoginRequest):
-
+async def login(request: LoginRequest) -> AuthToken:
     user = users.find_one({"username": request.username})
     
     print(user)
@@ -175,7 +175,28 @@ async def login(request: LoginRequest):
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    return {"message": "Login successful"}
+    auth_token = generate_token(user["username"], config("TOKEN_EXPIRY"))
+    return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
+
+def generate_token(username: str, expiry: int) -> str:
+    encode = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
+    return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=403, detail="Invalid token")
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+@app.get("/verify")
+async def verify_user(token: str = Query(...)) -> dict:
+    payload = verify_token(token)
+    username = payload.get("sub")
+    return {"message": "Token verified", "username": username}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

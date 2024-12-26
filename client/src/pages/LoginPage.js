@@ -1,11 +1,12 @@
 import {useState} from "react";
+import {useNavigate} from "react-router-dom";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
 
 export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [redirect, setRedirect] = useState(false);
+    const navigate = useNavigate();
 
     async function attemptLogin(ev) {
         ev.preventDefault();
@@ -16,7 +17,7 @@ export default function LoginPage() {
             });
             alert(response.data.message);
 
-            localStorage.setItem("token", data.access_token);
+            localStorage.setItem("token", response.data.access_token);
             // Redirect to the home page if login successful
             setRedirect(true);
 
@@ -29,33 +30,8 @@ export default function LoginPage() {
         }
     }
 
-    async function verifyToken() {
-        const token = localStorage.getItem("token");
-        if (token) {
-            try {
-                // Verify the token
-                const response = await axios.post(`http://localhost:8000/verify/${token}`, {
-                    token
-                });
-                alert(response.data.message);
-            } catch (error) {
-                localStorage.removeItem("token");
-                navigate("/login"); // Authentication failed, remove local token for security
-            }
-        } else {
-            navigate("/login");
-        }
-    }
-
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) {
-            verifyToken(token);
-        }
-    }, []);
-
     if (redirect) {
-        return <Navigate to={"/"} />;
+        navigate("/");
     }
 
     return (
