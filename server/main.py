@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from email_validator import validate_email, EmailNotValidError
 from decouple import config
 from password_strength import PasswordPolicy
 from pymongo import MongoClient
@@ -42,13 +43,25 @@ app.add_middleware(
 
 class RegisterRequest(BaseModel):
     username: str
+    email: str
     password: str
     
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
-def validate_password(password: str) -> None:
+def validate_request(request: RegisterRequest) -> None:
+    """Checks password, email and username to ensure all are valid and do not already exist in the collection
+
+    Args:
+        request (RegisterRequest): request object containing username, email and password
+    """
+    
+    validate_password(request.password)
+    validate_username(request.username)
+    validate_email(request.email)
+
+def _validate_password(password: str) -> None:
     
     """Validates a provided password against common password policies. Raises an exception if the password is invalid.
     """
@@ -63,8 +76,6 @@ def validate_password(password: str) -> None:
         "Special(1)": "Password must contain at least one special character"
     }
     
-    print(validation)
-    
     for policy in validation:
         error_msg.append(error_map.get(str(policy), "Unknown policy violation"))
         
@@ -72,7 +83,7 @@ def validate_password(password: str) -> None:
         error_msg = ", ".join(error_msg)
         raise HTTPException(status_code=400, detail=error_msg)
     
-def validate_username(username: str) -> None:
+def _validate_username(username: str) -> None:
     
     """Ensures a provided username does not already exist in the collection
     """
@@ -81,7 +92,24 @@ def validate_username(username: str) -> None:
     
     if user:
         raise HTTPException(status_code=400, detail="Username already registered, please login")
+
+def _validate_email(email: str) -> None:
     
+    """Ensures a provided email does not already exist in the collection and is valid
+    """
+
+    # Check whether provided email is a valid address    
+    try:
+        validate_email(email)
+    except EmailNotValidError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid email: {e}")
+    
+    # Ensure email does not already exist in the collection
+    email = users.find_one({"email": email})
+    
+    if email:
+        raise HTTPException(status_code=400, detail="Email already registered, please login")
+
 def encrypt_password(password: str) -> str:
     
     """Encrypts a provided password using bcrypt
@@ -103,6 +131,7 @@ async def register(request: RegisterRequest):
     # ensure provided password is valid before registering user
     validate_password(request.password)
     validate_username(request.username)
+    validate_email(request.email)
 
     users.insert_one({
         "username": request.username,

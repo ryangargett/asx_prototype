@@ -3,6 +3,7 @@ import axios from "axios";
 
 export default function RegisterPage() {
     const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     
     async function attemptRegister(ev) {
@@ -10,6 +11,7 @@ export default function RegisterPage() {
         try {
             const response = await axios.post("http://localhost:8000/register", {
                 username,
+                email,
                 password
             });
             alert(response.data.message);
@@ -29,6 +31,11 @@ export default function RegisterPage() {
                 placeholder="Username" 
                 value={username} 
                 onChange={ev => setUsername(ev.target.value)}
+            />
+             <input type="text"
+                placeholder="Email"
+                value={email} 
+                onChange={ev => setEmail(ev.target.value)}
             />
             <input type="text"
                 placeholder="Password" 
