@@ -16,6 +16,7 @@ export default function LoginPage() {
             });
             alert(response.data.message);
 
+            localStorage.setItem("token", data.access_token);
             // Redirect to the home page if login successful
             setRedirect(true);
 
@@ -28,10 +29,35 @@ export default function LoginPage() {
         }
     }
 
+    async function verifyToken() {
+        const token = localStorage.getItem("token");
+        if (token) {
+            try {
+                // Verify the token
+                const response = await axios.post(`http://localhost:8000/verify/${token}`, {
+                    token
+                });
+                alert(response.data.message);
+            } catch (error) {
+                localStorage.removeItem("token");
+                navigate("/login"); // Authentication failed, remove local token for security
+            }
+        } else {
+            navigate("/login");
+        }
+    }
+
+    useEffect(() => {
+        const token = localStorage.getItem("token");
+        if (token) {
+            verifyToken(token);
+        }
+    }, []);
+
     if (redirect) {
         return <Navigate to={"/"} />;
     }
-    
+
     return (
         <form className = "login" onSubmit={attemptLogin}>
             <h1>Login</h1>
