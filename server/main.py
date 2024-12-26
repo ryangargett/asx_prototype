@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, APIRouter, Query, Depends
+from fastapi import FastAPI, HTTPException, Depends, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -158,7 +158,7 @@ async def register(request: RegisterRequest) -> dict:
         raise HTTPException(status_code=500, detail="User registration failed")
     
 @app.post("/token", response_model = AuthToken)
-async def login(request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
+async def login(response: Response, request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
     user = users.find_one({"username": request.username})
     
     print(user)
@@ -176,6 +176,7 @@ async def login(request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
         raise HTTPException(status_code=400, detail="Invalid password")
     
     auth_token = generate_token(user["username"], config("TOKEN_EXPIRY"))
+    response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
 def generate_token(username: str, expiry: int) -> str:
@@ -193,7 +194,10 @@ def verify_token(token: str):
         raise HTTPException(status_code=403, detail="Invalid token")
 
 @app.get("/verify")
-async def verify_user(token: str = Depends(auth_schema)) -> dict:
+async def verify_user(request: Request) -> dict:
+    token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     payload = verify_token(token)
     username = payload.get("sub")
     return {"message": "Token verified", "username": username}

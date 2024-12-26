@@ -12,16 +12,12 @@ export default function Header() {
         console.log("Token", token);
         if (token) {
             try {
-                // Verify the token
                 const response = await axios.get("http://localhost:8000/verify", {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                        withCredentials: true
                 });
                 alert(response.data.message);
                 setUsername(response.data.username);
             } catch (error) {
-                localStorage.removeItem("token");
                 alert("Authentication failed, please login");
                 navigate("/login");
             }
@@ -31,10 +27,7 @@ export default function Header() {
         }
     }
     useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) {
-            verifyToken();
-        }
+        verifyToken();
     }, []);
 
 
