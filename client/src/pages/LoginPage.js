@@ -23,7 +23,7 @@ export default function LoginPage() {
     }
 
     return (
-        <form className = "login">
+        <form className = "login" onSubmit={attemptLogin}>
             <h1>Login</h1>
             <input type="text" 
                 placeholder="Username"

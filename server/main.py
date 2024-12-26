@@ -137,6 +137,7 @@ async def register(request: RegisterRequest):
 
     users.insert_one({
         "username": request.username,
+        "email": request.email,
         "password": encrypt_password(request.password)
     })
     
@@ -148,9 +149,11 @@ async def register(request: RegisterRequest):
         raise HTTPException(status_code=500, detail="User registration failed")
     
 @app.post("/login")
-async def login(request: RegisterRequest):
+async def login(request: LoginRequest):
 
     user = users.find_one({"username": request.username})
+    
+    print(user)
     
     if not user:
         # try email address as well
@@ -158,6 +161,8 @@ async def login(request: RegisterRequest):
         
         if not user:
             raise HTTPException(status_code=400, detail="Invalid username or email")
+     
+    print(user)
         
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
