@@ -41,22 +41,13 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     
-    def get_password(self) -> str:
-        return self.password
-    
-    def get_username(self) -> str:
-        return self.username
-    
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
-def validate_password(password: str) -> str:
+def validate_password(password: str) -> None:
     
-    """Validates a provided password against common password policies.
-
-    Returns:
-        error_msg (str): An error message if the password is invalid, an empty string otherwise
+    """Validates a provided password against common password policies. Raises an exception if the password is invalid.
     """
     
     error_msg = []
@@ -75,31 +66,26 @@ def validate_password(password: str) -> str:
         error_msg.append(error_map.get(str(policy), "Unknown policy violation"))
         
     if len(error_msg) > 0:
-        return False, ", ".join(error_msg)
-    else:
-        return True, ""
+        error_msg = ", ".join(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
     
 @app.post("/register")
 async def register(request: RegisterRequest):
     
-    error_msg = validate_password(RegisterRequest.get_password())
+    # ensure provided password is valid before registering user
+    validate_password(request.password)
+
+    users.insert_one({
+        "username": request.username,
+        "password": request.password
+    })
     
-    print(error_msg)
-    
-    if error_msg != "":
-        raise HTTPException(status_code=400, detail=error_msg)
+    # Check if user was successfully registered
+    new_user = users.find_one({"username": request.username})
+    if new_user:
+        return {"message": "User registered successfully"}
     else:
-        users.insert_one({
-            "username": request.get_username(),
-            "password": request.get_password()
-        })
-        
-        # Check if user was successfully registered
-        new_user = users.find_one({"username": request.username})
-        if new_user:
-            return {"message": "User registered successfully"}
-        else:
-            raise HTTPException(status_code=500, detail="User registration failed")
+        raise HTTPException(status_code=500, detail="User registration failed")
     
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
