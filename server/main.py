@@ -11,10 +11,16 @@ from pymongo import MongoClient
 app = FastAPI()
 
 client = MongoClient(config("MONGODB_KEY"))
+
+# Check if cluster is connected
+try:
+    client.admin.command('ping')
+    print("MongoDB connection: Successful")
+except Exception as e:
+    print(f"MongoDB connection: Failed - {e}")
+
 db = client["main"]
-
-print(db.list_collection_names())
-
+users = db["users"]
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -35,16 +41,21 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     
+    def get_password(self) -> str:
+        return self.password
+    
+    def get_username(self) -> str:
+        return self.username
+    
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
-def validate_password(password: str) -> tuple[bool, str]:
+def validate_password(password: str) -> str:
     
     """Validates a provided password against common password policies.
 
     Returns:
-        bool: True if the password is valid, False otherwise
         error_msg (str): An error message if the password is invalid, an empty string otherwise
     """
     
@@ -67,20 +78,28 @@ def validate_password(password: str) -> tuple[bool, str]:
         return False, ", ".join(error_msg)
     else:
         return True, ""
-        
     
 @app.post("/register")
 async def register(request: RegisterRequest):
-    password = request.password
     
-    is_valid, error_msg = validate_password(password)
+    error_msg = validate_password(RegisterRequest.get_password())
     
-    print(is_valid, error_msg)
+    print(error_msg)
     
-    if not is_valid:
+    if error_msg != "":
         raise HTTPException(status_code=400, detail=error_msg)
     else:
-        return {"message": "User registered successfully"}
+        users.insert_one({
+            "username": request.get_username(),
+            "password": request.get_password()
+        })
+        
+        # Check if user was successfully registered
+        new_user = users.find_one({"username": request.username})
+        if new_user:
+            return {"message": "User registered successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="User registration failed")
     
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
