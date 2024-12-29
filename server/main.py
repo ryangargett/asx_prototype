@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 import os
 import uuid
 
+from io import BytesIO
+
 import uvicorn
 
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
@@ -14,6 +16,7 @@ from decouple import config
 from jose import jwt, JWTError
 from password_strength import PasswordPolicy
 from passlib.context import CryptContext
+from PIL import Image
 from pymongo import MongoClient
 
 app = FastAPI()
@@ -229,11 +232,18 @@ async def create_post(title: str = Form(...),
     upload_dir = "uploads"
     # create unique post id to store image(s)
     post_id = str(uuid.uuid4())
-    cover_id = f"{post_id}_cover"
-    upload_path = os.path.join(upload_dir, cover_id)
-    os.makedirs(upload_dir, exist_ok=True)
-    with open(upload_path, "wb") as buffer:
-        buffer.write(await cover_image.read())
+    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    cover_id = f"{post_id}_cover.webp"
+    upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+
+    # ensure file can be coerced to .webp before uploading to db
+    
+    try:
+        img = Image.open(BytesIO(await cover_image.read()))
+        conv_img = img.convert("RGB")
+        conv_img.save(upload_path, "webp")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
     
     posts.insert_one({
         "title": title,
