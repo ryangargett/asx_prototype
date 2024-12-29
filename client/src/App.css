@@ -11,7 +11,7 @@ img {
 }
 
 main {
-  @apply container mx-auto px-4 py-6 max-w-4xl;
+  @apply container mx-auto px-4 py-6 max-w-5xl;
 }
 
 header {
@@ -103,11 +103,11 @@ div.post-page {
 }
 
 div.post-page div.post-img {
-  @apply aspect-[16/9] overflow-hidden rounded-lg mb-10; /* Increased bottom margin */
+  @apply h-[300px] md:h-[400px] w-full overflow-hidden mb-10; /* Set height to 300px on small screens and 400px on medium and larger screens */
 }
 
 div.post-page div.post-img img {
-  @apply rounded-lg;
+  @apply w-full h-full object-cover; /* Ensure the image covers the div and overflows if necessary */
 }
 
 div.post-page h1.post-title {
