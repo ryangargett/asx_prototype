@@ -30,33 +30,33 @@ header nav {
   @apply flex gap-4;
 }
 
-div.post {
+.post {
   @apply grid grid-cols-1 md:grid-cols-[0.9fr_1.1fr] gap-5 mb-6 bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
-div.post:hover {
+.post:hover {
   transform: scale(1.05);
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
 }
 
-div.post-img {
+.post-img {
   @apply relative aspect-[4/3] overflow-hidden;
 }
 
-div.post-img img {
+.post-img img {
   @apply object-cover w-full h-full;
 }
 
-div.post-info {
+.post-info {
   @apply p-4 flex flex-col gap-2;
 }
 
-div.post-info .post-title {
+.post-info .post-title {
   @apply m-0 text-4xl font-semibold leading-tight;
 }
 
-div.post-info .post-date {
+.post-info .post-date {
   @apply text-sm font-bold text-gray-600 mt-2;
 }
 
@@ -98,7 +98,31 @@ button {
   }
 }
 
-/* Optional: Custom scrollbar */
+div.post-page {
+  @apply max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-md;
+}
+
+div.post-page div.post-img {
+  @apply aspect-[16/9] overflow-hidden rounded-lg mb-10; /* Increased bottom margin */
+}
+
+div.post-page div.post-img img {
+  @apply rounded-lg;
+}
+
+div.post-page h1.post-title {
+  @apply text-4xl font-bold mb-4 text-gray-800;
+}
+
+div.post-page div.post-content {
+  @apply prose prose-lg max-w-none text-gray-700 mt-8; /* Added top margin */
+}
+
+div.post-page div.post-content {
+  @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-2; /* Added top margin and decreased paragraph spacing */
+}
+
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   @apply w-2;
 }

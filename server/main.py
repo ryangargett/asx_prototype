@@ -253,7 +253,7 @@ async def create_post(title: str = Form(...),
     posts.insert_one({
         "post_id": post_id,
         "title": title,
-        "body": content,
+        "content": content,
         "cover_image": cover_id,
         "created_at": created_at,
         "modified_at": created_at
@@ -265,6 +265,13 @@ async def create_post(title: str = Form(...),
 async def get_posts() -> dict:
     all_posts = posts.find({}, {"_id": 0})
     return {"message": "Posts loaded successfully", "posts": list(all_posts)}
+
+@app.get("/post/{id}")
+async def get_post(id: str) -> dict:
+    post = posts.find_one({"post_id": id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"message": "Post loaded successfully", "post": post}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

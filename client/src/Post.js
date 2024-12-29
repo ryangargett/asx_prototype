@@ -1,10 +1,11 @@
 import TimeAgo from 'javascript-time-ago';
 import enAU from 'javascript-time-ago/locale/en-AU';
 import ReactTimeAgo from 'react-time-ago';
+import { Link } from 'react-router-dom';
 
 TimeAgo.addLocale(enAU)
 
-export default function Post({post_id, title, cover_image, summary, modified_at}) {
+export default function Post({post_id, title, cover_image, modified_at}) {
     const coverPath = `http://localhost:8000/uploads/${post_id}/${cover_image}`;
     console.log(modified_at);
     const modifiedAt = new Date(modified_at);
@@ -12,7 +13,7 @@ export default function Post({post_id, title, cover_image, summary, modified_at}
     console.log(localModifiedAt);
 
     return (
-        <div className="post" id={post_id}>
+        <Link to={`/post/${post_id}`} className="post" id={post_id}>
             <div className="post-img">
                 <img 
                     src={coverPath}
@@ -25,6 +26,6 @@ export default function Post({post_id, title, cover_image, summary, modified_at}
                     Posted: <ReactTimeAgo date={localModifiedAt} locale="en-AU"/>
                 </h3>
             </div>
-        </div>
+        </Link>
     );
 }
