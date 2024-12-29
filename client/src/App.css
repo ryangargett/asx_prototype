@@ -52,12 +52,12 @@ div.post-info {
   @apply p-4 flex flex-col gap-2;
 }
 
-div.post-info h2 {
-  @apply m-0 text-2xl font-semibold leading-tight;
+div.post-info .post-title {
+  @apply m-0 text-4xl font-semibold leading-tight;
 }
 
-div.post-info h3 {
-  @apply text-sm font-bold text-gray-600;
+div.post-info .post-date {
+  @apply text-sm font-bold text-gray-600 mt-2;
 }
 
 form.login, form.register{
