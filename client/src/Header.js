@@ -5,6 +5,7 @@ import axios from "axios";
 export default function Header() {
 
     const [username, setUsername] = useState(null);
+    const [elevation, setElevation] = useState(null);
     const navigate = useNavigate();
 
     async function verifyToken() {
@@ -17,6 +18,8 @@ export default function Header() {
                 });
                 alert(response.data.message);
                 setUsername(response.data.username);
+                setElevation(response.data.elevation);
+                console.log("Elevation", response.data.elevation);
             } catch (error) {
                 alert("Authentication failed, please login");
             }
@@ -51,6 +54,7 @@ export default function Header() {
                 {username && (
                     <>
                         <Link to="/profile">{username}</Link>
+                        {elevation === "admin" && <Link to="/create">Create Post</Link>}
                         <Link to="/" onClick={logoutUser}>Logout</Link>
                     </>
                 )}

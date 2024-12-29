@@ -15,6 +15,7 @@ from passlib.context import CryptContext
 from pymongo import MongoClient
 
 app = FastAPI()
+#TODO: replace with bcrypt to avoid logging error
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 client = MongoClient(config("MONGODB_KEY"))
@@ -28,7 +29,12 @@ except Exception as e:
 
 db = client["main"]
 users = db["users"]
-#users.delete_many({})
+users.delete_many({})
+
+users.insert_one({"username": "admin", 
+                  "email": "",
+                  "password": encrypter.hash("admin"),
+                  "elevation": "admin"})
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -59,14 +65,16 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str
     
-def generate_token(username: str, expiry: int) -> str:
-    encode = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
+def generate_token(username: str, elevation: str, expiry: int) -> str:
+    encode = {"user": username,
+              "elevation": elevation, 
+              "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
     return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
     try:
         payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
-        username = payload.get("sub")
+        username = payload.get("user")
         if username is None:
             raise HTTPException(status_code=403, detail="Invalid token")
         return payload
@@ -160,7 +168,8 @@ async def register(request: RegisterRequest) -> dict:
     users.insert_one({
         "username": request.username,
         "email": request.email,
-        "password": encrypt_password(request.password)
+        "password": encrypt_password(request.password),
+        "elevation": "user"
     })
     
     # Check if user was successfully registered
@@ -188,7 +197,7 @@ async def login(response: Response, request: OAuth2PasswordRequestForm = Depends
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    auth_token = generate_token(user["username"], config("TOKEN_EXPIRY"))
+    auth_token = generate_token(user["username"], user["elevation"], config("TOKEN_EXPIRY"))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
@@ -203,8 +212,11 @@ async def verify_user(request: Request) -> dict:
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = verify_token(token)
-    username = payload.get("sub")
-    return {"message": "Token verified", "username": username}
+    username = payload.get("user")
+    elevation = payload.get("elevation")
+    return {"message": "Token verified", 
+            "username": username,
+            "elevation": elevation}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
