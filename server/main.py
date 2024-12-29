@@ -245,10 +245,14 @@ async def create_post(title: str = Form(...),
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
     
+    created_at = datetime.now(timezone.utc)
+    
     posts.insert_one({
         "title": title,
         "body": content,
-        "cover_image": cover_id
+        "cover_image": cover_id,
+        "created_at": created_at,
+        "modified_at": created_at
     })
     
     return {"message": "Post created successfully"}
