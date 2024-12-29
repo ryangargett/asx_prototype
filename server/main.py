@@ -273,5 +273,45 @@ async def get_post(id: str) -> dict:
         raise HTTPException(status_code=404, detail="Post not found")
     return {"message": "Post loaded successfully", "post": post}
 
+@app.put("/edit")
+async def edit_post(post_id: str = Form(...),
+                    title: str = Form(...),
+                    content: str = Form(...),
+                    cover_image: UploadFile = File(None)) -> dict:
+    
+    post = posts.find_one({"post_id": post_id})
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # check if cover image was uploaded, in which case update the cover image
+    if cover_image:
+        upload_dir = "uploads"
+        cover_id = f"{post_id}_cover.webp"
+        upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+        
+        # Delete the existing cover image to force an update
+        if os.path.exists(upload_path):
+            os.remove(upload_path)
+        
+        try:
+            img = Image.open(BytesIO(await cover_image.read()))
+            conv_img = img.convert("RGB")
+            conv_img.save(upload_path, "webp")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+        
+    print(cover_image)
+        
+    # update post content
+    posts.update_one({"post_id": post_id},
+                     {"$set": {"title": title,
+                               "content": content,
+                               "modified_at": datetime.now(timezone.utc)}})
+    
+    print(cover_image)
+    
+    return {"message": "Post updated successfully"}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

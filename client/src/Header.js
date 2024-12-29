@@ -3,7 +3,7 @@ import { useUser } from './context/UserContext';
 import axios from 'axios';
 
 export default function Header() {
-    const { username, elevation, setUsername, setElevation, verifyToken } = useUser();
+    const { username, elevation, setUsername, setElevation } = useUser();
     const navigate = useNavigate();
 
     async function logoutUser() {

@@ -6,6 +6,7 @@ import RegisterPage from "./pages/RegisterPage";
 import CreatePostPage from "./pages/CreatePostPage";
 import { UserProvider } from "./context/UserContext";
 import PostPage from "./pages/PostPage";
+import EditPostPage from "./pages/EditPostPage";
 import {Route, Routes} from "react-router-dom";
 
 
@@ -19,6 +20,7 @@ function App() {
           <Route path="/register" element = {<RegisterPage/>} />
           <Route path="/create" element = {<CreatePostPage/>} />
           <Route path="/post/:id" element = {<PostPage/>} />
+          <Route path="/edit/:id" element = {<EditPostPage/>} />
         </Route>
       </Routes>
     </UserProvider>

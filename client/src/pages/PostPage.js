@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react"
-import { useParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
+import { useUser } from '../context/UserContext'
 import axios from "axios"
+
 
 export default function PostPage() {
 
     const [post, setPost] = useState(null)
     const params = useParams()
+    const { elevation } = useUser();
 
     console.log(params)
 
@@ -19,7 +22,7 @@ export default function PostPage() {
             .catch(error => {
                 console.error("There was an error fetching the post!", error)
             })
-    }, [])
+    }, [params.id])
 
     if (!post) {
         return <div>Loading...</div>;
@@ -33,6 +36,9 @@ export default function PostPage() {
             <h1 className="post-title">
                 {post.title}
             </h1>
+            {elevation === "admin" && (
+                <Link to={`/edit/${post.post_id}`} className="edit-post">Edit Post</Link>
+            )}
             <div className="post-content" dangerouslySetInnerHTML={{__html:post.content}}></div>
         </div>
     )

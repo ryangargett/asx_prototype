@@ -122,6 +122,10 @@ div.post-page div.post-content {
   @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-2; /* Added top margin and decreased paragraph spacing */
 }
 
+.edit-post {
+  @apply underline text-blue-600 hover:text-blue-800;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   @apply w-2;
