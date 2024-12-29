@@ -1,33 +1,10 @@
-import {useEffect, useState} from "react";
-import {Link, useNavigate} from 'react-router-dom';
-import axios from "axios";
+import { Link, useNavigate } from 'react-router-dom';
+import { useUser } from './context/UserContext';
+import axios from 'axios';
 
 export default function Header() {
-
-    const [username, setUsername] = useState(null);
-    const [elevation, setElevation] = useState(null);
+    const { username, elevation, setUsername, setElevation, verifyToken } = useUser();
     const navigate = useNavigate();
-
-    async function verifyToken() {
-        const token = localStorage.getItem("token");
-        console.log("Token", token);
-        if (token) {
-            try {
-                const response = await axios.get("http://localhost:8000/verify", {
-                        withCredentials: true
-                });
-                //alert(response.data.message);
-                setUsername(response.data.username);
-                setElevation(response.data.elevation);
-                console.log("Elevation", response.data.elevation);
-            } catch (error) {
-                alert("Authentication failed, please login");
-            }
-        } else {
-            alert("An unexpected error occured, please login");
-            navigate("/login");
-        }
-    }
 
     async function logoutUser() {
         try {
@@ -36,16 +13,12 @@ export default function Header() {
             });
             alert(response.data.message);
             setUsername(null);
+            setElevation(null);
             navigate("/");
         } catch (error) {
             alert("An unexpected error occurred");
         }
     }
-
-    useEffect(() => {
-        verifyToken();
-    }, []);
-
 
     return (    
         <header>
@@ -53,7 +26,7 @@ export default function Header() {
             <nav>
                 {username && (
                     <>
-                        <Link to="/profile">{username}</Link>
+                        <Link to="/profile">Welcome, {username}!</Link>
                         {elevation === "admin" && <Link to="/create">Create Post</Link>}
                         <Link to="/" onClick={logoutUser}>Logout</Link>
                     </>

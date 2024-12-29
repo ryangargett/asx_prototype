@@ -1,9 +1,11 @@
 import {useState} from "react";
 import {useNavigate} from "react-router-dom";
 import axios from "axios";
+import { useUser } from "../context/UserContext";
 
 export default function LoginPage() {
-    const [username, setUsername] = useState("");
+    const [username, setLocalUsername] = useState("");
+    const { setUsername, setElevation } = useUser();
     const [password, setPassword] = useState("");
     const navigate = useNavigate();
 
@@ -20,12 +22,12 @@ export default function LoginPage() {
                 },
                 withCredentials: true
             });
-            alert(response.data.message);
-            localStorage.setItem("token", response.data.access_token);
-            console.log("Token", response.data.access_token);
+            console.log(response.data);
+            setUsername(response.data.username);
+            setElevation(response.data.elevation);
+            navigate("/");
             // Redirect to the home page if login successful
             navigate("/")
-
         } catch (error) {
             if (error.response && error.response.data && error.response.data.detail) {
                 alert(error.response.data.detail);
@@ -41,7 +43,7 @@ export default function LoginPage() {
             <input type="text" 
                 placeholder="Username"
                 value={username}
-                onChange={ev => setUsername(ev.target.value)}
+                onChange={ev => setLocalUsername(ev.target.value)}
             />
             <input type="password"
                 placeholder="Password" 
