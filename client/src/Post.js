@@ -1,14 +1,30 @@
-export default function Post() {
+import TimeAgo from 'javascript-time-ago';
+import en from 'javascript-time-ago/locale/en';
+import enAU from 'javascript-time-ago/locale/en-AU';
+import ReactTimeAgo from 'react-time-ago';
+
+TimeAgo.addLocale(enAU)
+
+export default function Post({post_id, title, cover_image, modified_at}) {
+    const coverPath = `http://localhost:8000/uploads/${post_id}/${cover_image}`;
+    console.log(modified_at);
+    const modifiedAt = new Date(modified_at);
+    const localModifiedAt = new Date(modifiedAt.getTime() - (modifiedAt.getTimezoneOffset() * 60000));
+    console.log(localModifiedAt);
+
     return (
-        <div className="post">
-        <div className="post-img">
-            <img src="https://techcrunch.com/wp-content/uploads/2022/12/lawnmower-Large.jpeg?resize=1200,735"/> 
-        </div>
-        <div className="post-info">
-            <h2>EcoFlow teases full-house battery backup coming later this year</h2>
-            <time>December 15, 2022</time>
-            <p>Today at its special launch event, home backup power giant EcoFlow launched a flurry of new products, including a “Whole-Home Backup Power Solution.”</p>
-        </div>
+        <div className="post" id={post_id}>
+            <div className="post-img">
+                <img 
+                    src={coverPath}  
+                /> 
+            </div>
+            <div className="post-info">
+                <h2>{title}</h2>
+                <h3>
+                    Posted: <ReactTimeAgo date={localModifiedAt} locale="en-AU"/>
+                </h3>
+            </div>
         </div>
     );
 }

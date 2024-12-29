@@ -16,7 +16,7 @@ export default function Header() {
                 const response = await axios.get("http://localhost:8000/verify", {
                         withCredentials: true
                 });
-                alert(response.data.message);
+                //alert(response.data.message);
                 setUsername(response.data.username);
                 setElevation(response.data.elevation);
                 console.log("Elevation", response.data.elevation);

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
 import "react-quill-new/dist/quill.snow.css";
 import axios from 'axios';
@@ -21,10 +22,11 @@ const formats = [
 ];
 
 export default function CreatePostPage() {
-
     const [title, setTitle] = useState("");
     const [cover_image, setCoverImage] = useState("");
     const [content, setContent] = useState("");
+
+    const navigate = useNavigate();
 
     //TODO: add sub-text image upload
 
@@ -36,16 +38,24 @@ export default function CreatePostPage() {
     async function createPost(ev) {
         ev.preventDefault();
 
-        console.log(cover_image);
+        try {
+            console.log(cover_image);
+            const response = await axios.post("http://localhost:8000/create",
+                postData,
+                { headers: {
+                        "Content-Type": "multipart/form-data"
+                }
+            });
 
-        const response = await axios.post("http://localhost:8000/create",
-              postData,
-              { headers: {
-                      "Content-Type": "multipart/form-data"
+            console.log(response.data.message);
+        } catch (error) {
+            if (error.response && error.response.data && error.response.data.detail) {
+                alert(error.response.data.detail);
+            } else {
+                alert("An unexpected error occurred please try again later");
             }
-        });
-
-        console.log(response.data.message);
+        }
+        navigate("/");
     }
 
     return (

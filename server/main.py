@@ -9,6 +9,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from email_validator import validate_email, EmailNotValidError
@@ -20,6 +21,7 @@ from PIL import Image
 from pymongo import MongoClient
 
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 #TODO: replace with bcrypt to avoid logging error
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -36,6 +38,7 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 users.delete_many({})
+#posts.delete_many({})
 
 users.insert_one({"username": "admin", 
                   "email": "",
@@ -248,6 +251,7 @@ async def create_post(title: str = Form(...),
     created_at = datetime.now(timezone.utc)
     
     posts.insert_one({
+        "post_id": post_id,
         "title": title,
         "body": content,
         "cover_image": cover_id,
@@ -256,6 +260,11 @@ async def create_post(title: str = Form(...),
     })
     
     return {"message": "Post created successfully"}
+
+@app.get("/posts")
+async def get_posts() -> dict:
+    all_posts = posts.find({}, {"_id": 0})
+    return {"message": "Posts loaded successfully", "posts": list(all_posts)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
