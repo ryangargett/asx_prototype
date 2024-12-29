@@ -29,23 +29,23 @@ export default function CreatePostPage() {
     //TODO: add sub-text image upload
 
     const postData = new FormData();
-    postData.set("title", title);
-    postData.set("cover_image", cover_image[0]); // handle multiple uploads
-    postData.set("content", content);
+    postData.append("title", title);
+    postData.append("cover_image", cover_image);
+    postData.append("content", content);
 
     async function createPost(ev) {
         ev.preventDefault();
 
         console.log(cover_image);
 
-        //const response = await axios.post("http://localhost:8000/create", {
-        //    title,
-        //    cover_image,
-        //    content
-        //});
+        const response = await axios.post("http://localhost:8000/create",
+              postData,
+              { headers: {
+                      "Content-Type": "multipart/form-data"
+            }
+        });
 
-
-        //console.log(title, cover_image, content);
+        console.log(response.data.message);
     }
 
     return (
@@ -58,7 +58,7 @@ export default function CreatePostPage() {
             />
             <input 
                 type="file"
-                onChange={ev => setCoverImage(ev.target.files)}
+                onChange={ev => setCoverImage(ev.target.files[0])}
             />
             <ReactQuill 
                 value={content}

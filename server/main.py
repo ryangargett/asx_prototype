@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta, timezone
+import os
+import uuid
 
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Request
+from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ except Exception as e:
 
 db = client["main"]
 users = db["users"]
+posts = db["posts"]
 users.delete_many({})
 
 users.insert_one({"username": "admin", 
@@ -217,6 +220,28 @@ async def verify_user(request: Request) -> dict:
     return {"message": "Token verified", 
             "username": username,
             "elevation": elevation}
+    
+@app.post("/create")
+async def create_post(title: str = Form(...),
+                      content: str = Form(...),
+                      cover_image: UploadFile = File(...)) -> dict:
+    
+    upload_dir = "uploads"
+    # create unique post id to store image(s)
+    post_id = str(uuid.uuid4())
+    cover_id = f"{post_id}_cover"
+    upload_path = os.path.join(upload_dir, cover_id)
+    os.makedirs(upload_dir, exist_ok=True)
+    with open(upload_path, "wb") as buffer:
+        buffer.write(await cover_image.read())
+    
+    posts.insert_one({
+        "title": title,
+        "body": content,
+        "cover_image": cover_id
+    })
+    
+    return {"message": "Post created successfully"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
