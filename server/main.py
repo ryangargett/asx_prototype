@@ -270,12 +270,12 @@ async def create_post(title: str = Form(...),
 
 @app.get("/posts")
 async def get_posts() -> dict:
-    all_posts = posts.find({}, {"_id": 0})
+    all_posts = posts.find({}, {"_id": 0}).sort("modified_at", -1)
     return {"message": "Posts loaded successfully", "posts": list(all_posts)}
 
 @app.get("/post/{id}")
 async def get_post(id: str) -> dict:
-    post = posts.find_one({"post_id": id}, {"_id": 0}.sort("modified_at", -1))
+    post = posts.find_one({"post_id": id}, {"_id": 0})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     return {"message": "Post loaded successfully", "post": post}
