@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 TimeAgo.addLocale(enAU)
 
 export default function Post({post_id, title, cover_image, modified_at}) {
-    const coverPath = `http://localhost:8000/uploads/${post_id}/${cover_image}`;
+    const coverPath = `http://localhost:8000/uploads/${post_id}/${cover_image}?t=${new Date().getTime()}`;
     console.log(modified_at);
     const modifiedAt = new Date(modified_at);
     const localModifiedAt = new Date(modifiedAt.getTime() - (modifiedAt.getTimezoneOffset() * 60000));

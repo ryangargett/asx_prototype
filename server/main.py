@@ -77,13 +77,18 @@ class AuthToken(BaseModel):
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
-              "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
+              "exp": datetime.now(timezone.utc) + timedelta(minutes=1)}
     return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
     try:
         payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
         username = payload.get("user")
+        exp = payload.get("exp")
+        current_time = datetime.now(timezone.utc).timestamp()
+        
+        print(f"Token expiration time: {exp}")
+        print(f"Current time: {current_time}")
         if username is None:
             raise HTTPException(status_code=403, detail="Invalid token")
         return payload
@@ -206,7 +211,9 @@ async def login(response: Response, request: OAuth2PasswordRequestForm = Depends
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    auth_token = generate_token(user["username"], user["elevation"], config("TOKEN_EXPIRY"))
+    print(config("TOKEN_EXPIRY"))
+    
+    auth_token = generate_token(user["username"], user["elevation"], int(config("TOKEN_EXPIRY")))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
@@ -268,7 +275,7 @@ async def get_posts() -> dict:
 
 @app.get("/post/{id}")
 async def get_post(id: str) -> dict:
-    post = posts.find_one({"post_id": id}, {"_id": 0})
+    post = posts.find_one({"post_id": id}, {"_id": 0}.sort("modified_at", -1))
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     return {"message": "Post loaded successfully", "post": post}

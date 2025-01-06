@@ -31,7 +31,7 @@ export default function PostPage() {
     return (
         <div className="post-page">
             <div className="post-img">
-                <img src={`http://localhost:8000/uploads/${post.post_id}/${post.cover_image}`} alt={post.title} />
+                <img src={`http://localhost:8000/uploads/${post.post_id}/${post.cover_image}?t=${new Date().getTime()}`} alt={post.title} />
             </div>
             <h1 className="post-title">
                 {post.title}

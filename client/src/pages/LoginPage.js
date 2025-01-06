@@ -25,9 +25,10 @@ export default function LoginPage() {
             console.log(response.data);
             setUsername(response.data.username);
             setElevation(response.data.elevation);
+            // Refresh and redirect to the home page
             navigate("/");
-            // Redirect to the home page if login successful
-            navigate("/")
+            navigate(0);
+            
         } catch (error) {
             if (error.response && error.response.data && error.response.data.detail) {
                 alert(error.response.data.detail);

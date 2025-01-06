@@ -48,6 +48,7 @@ export default function EditPostPage() {
             });
 
             console.log(response.data.message);
+            setCoverImage(cover_image + `?t=${new Date().getTime()}`);
         } catch (error) {
             if (error.response && error.response.data && error.response.data.detail) {
                 alert(error.response.data.detail);

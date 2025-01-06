@@ -40,7 +40,7 @@ export default function RegisterPage() {
                 value={email} 
                 onChange={ev => setEmail(ev.target.value)}
             />
-            <input type="text"
+            <input type="password"
                 placeholder="Password" 
                 value={password} 
                 onChange={ev => setPassword(ev.target.value)}

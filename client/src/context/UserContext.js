@@ -1,4 +1,5 @@
 import { createContext, useState, useContext, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // Create a context with default values
@@ -14,6 +15,8 @@ export const UserProvider = ({ children }) => {
     const [username, setUsername] = useState(null);
     const [elevation, setElevation] = useState(null);
 
+    const navigate = useNavigate();
+
     const verifyToken = async () => {
         try {
             const response = await axios.get("http://localhost:8000/verify", {
@@ -23,15 +26,16 @@ export const UserProvider = ({ children }) => {
             setElevation(response.data.elevation);
             console.log("Elevation", response.data.elevation);
         } catch (error) {
-            console.log("Authentication failed, please login");
+            alert("Authentication failed, please login");
+            setUsername(null);
+            setElevation(null);
+            navigate("/login");
         }
     };
 
     useEffect(() => {
-        if (!username) {
-            verifyToken();
-        }
-    }, [username]);
+        verifyToken();
+    }, []);
 
     return (
         <UserContext.Provider value={{ username, elevation, setUsername, setElevation, verifyToken }}>
