@@ -269,8 +269,11 @@ async def create_post(title: str = Form(...),
     return {"message": "Post created successfully"}
 
 @app.get("/posts")
-async def get_posts() -> dict:
-    all_posts = posts.find({}, {"_id": 0}).sort("modified_at", -1)
+async def get_posts(search: str) -> dict:
+    if search != "":
+        all_posts = posts.find({"title": {"$regex": search, "$options": "i"}}, {"_id": 0}).sort("modified_at", -1)
+    else:
+        all_posts = posts.find({}, {"_id": 0}).sort("modified_at", -1)
     return {"message": "Posts loaded successfully", "posts": list(all_posts)}
 
 @app.get("/post/{id}")

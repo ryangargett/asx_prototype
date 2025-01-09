@@ -1,27 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Post from "../Post";
-import axios from "axios";
+import { usePost } from "../context/PostContext";
 
 export default function HomePage() {
-    
-    const [posts, setPosts] = useState([]);
-    
+    const { posts, searchQuery, setSearchQuery, fetchPosts } = usePost();
+
     useEffect(() => {
-        axios.get("http://localhost:8000/posts")
-            .then(response => {
-                console.log(response.data.posts);
-                setPosts(response.data.posts);
-                console.log(response.data.message);
-            })
-            .catch(error => {
-                console.error("There was an error fetching the posts!", error);
-            });
-    }, []);
+        fetchPosts();
+    }, [searchQuery]);
+
     return (
         <>
-            {posts.length > 0 && posts.map(post => (
-                <Post key = {post.post_id} {...post} />
-            ))}
+            <input
+                type="text"
+                placeholder="Search by title"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ marginBottom: "20px", padding: "10px", width: "100%" }}
+            />
+            {posts.length > 0 ? (
+                posts.map(post => (
+                    <Post key={post.post_id} {...post} />
+                ))
+            ) : (
+                <p>No posts found</p>
+            )}
         </>
-    )
+    );
 }

@@ -12,6 +12,7 @@ export default function CreatePostPage() {
     const navigate = useNavigate();
 
     //TODO: add sub-text image upload
+    //TODO: modify user prompt at runtime
 
     const postData = new FormData();
     postData.append("title", title);
