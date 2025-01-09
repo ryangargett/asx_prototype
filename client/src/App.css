@@ -142,3 +142,19 @@ div.create-post div.article-content {
 ::-webkit-scrollbar-thumb {
   @apply bg-gray-400 rounded-full hover:bg-gray-500;
 }
+
+/* Custom Loader */
+.loader-overlay {
+  @apply fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50;
+}
+
+.loader-spinner {
+  @apply ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32;
+  border-top-color: #3498db;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

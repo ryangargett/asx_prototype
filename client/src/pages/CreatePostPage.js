@@ -12,6 +12,7 @@ export default function CreatePostPage() {
     const [pdf, setPdf] = useState(null);
     const [postID, setPostID] = useState(null);
     const [dragging, setDragging] = useState(false);
+    const [loading, setLoading] = useState(false);
     const coverImageInputRef = useRef(null);
 
     const navigate = useNavigate();
@@ -63,6 +64,7 @@ export default function CreatePostPage() {
     const handleDrop = async (ev) => {
         ev.preventDefault();
         setDragging(false);
+        setLoading(true);
         const file = ev.dataTransfer.files[0];
         if (file && file.type === "application/pdf") {
             setPdf(file);
@@ -74,6 +76,7 @@ export default function CreatePostPage() {
                         "Content-Type": "multipart/form-data"
                     }
                 });
+                setLoading(false);
                 setTitle(response.data.title);
                 setContent(response.data.content);
                 setCoverImageUrl(response.data.cover_image);
@@ -88,6 +91,11 @@ export default function CreatePostPage() {
 
     return (
         <div className="create-post">
+            {loading && (
+                <div className="loader-overlay">
+                        <div className="loader-spinner"></div>
+                </div>
+            )}
             <form onSubmit={createPost}>
                 <h1>Autofill from PDF</h1>
                 <div 
