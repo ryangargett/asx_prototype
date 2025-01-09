@@ -1,10 +1,15 @@
 from datetime import datetime, timedelta, timezone
+import os
+import uuid
+
+from io import BytesIO
 
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Request
+from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from email_validator import validate_email, EmailNotValidError
@@ -12,9 +17,12 @@ from decouple import config
 from jose import jwt, JWTError
 from password_strength import PasswordPolicy
 from passlib.context import CryptContext
+from PIL import Image
 from pymongo import MongoClient
 
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+#TODO: replace with bcrypt to avoid logging error
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 client = MongoClient(config("MONGODB_KEY"))
@@ -28,7 +36,14 @@ except Exception as e:
 
 db = client["main"]
 users = db["users"]
-#users.delete_many({})
+posts = db["posts"]
+users.delete_many({})
+#posts.delete_many({})
+
+users.insert_one({"username": "admin", 
+                  "email": "",
+                  "password": encrypter.hash("admin"),
+                  "elevation": "admin"})
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -39,7 +54,7 @@ pwd_policy = PasswordPolicy.from_names(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # update once domain is known
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,14 +74,21 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str
     
-def generate_token(username: str, expiry: int) -> str:
-    encode = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(minutes=int(expiry))}
+def generate_token(username: str, elevation: str, expiry: int) -> str:
+    encode = {"user": username,
+              "elevation": elevation, 
+              "exp": datetime.now(timezone.utc) + timedelta(minutes=1)}
     return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
     try:
         payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
-        username = payload.get("sub")
+        username = payload.get("user")
+        exp = payload.get("exp")
+        current_time = datetime.now(timezone.utc).timestamp()
+        
+        print(f"Token expiration time: {exp}")
+        print(f"Current time: {current_time}")
         if username is None:
             raise HTTPException(status_code=403, detail="Invalid token")
         return payload
@@ -160,7 +182,8 @@ async def register(request: RegisterRequest) -> dict:
     users.insert_one({
         "username": request.username,
         "email": request.email,
-        "password": encrypt_password(request.password)
+        "password": encrypt_password(request.password),
+        "elevation": "user"
     })
     
     # Check if user was successfully registered
@@ -188,7 +211,9 @@ async def login(response: Response, request: OAuth2PasswordRequestForm = Depends
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    auth_token = generate_token(user["username"], config("TOKEN_EXPIRY"))
+    print(config("TOKEN_EXPIRY"))
+    
+    auth_token = generate_token(user["username"], user["elevation"], int(config("TOKEN_EXPIRY")))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
@@ -203,8 +228,100 @@ async def verify_user(request: Request) -> dict:
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = verify_token(token)
-    username = payload.get("sub")
-    return {"message": "Token verified", "username": username}
+    username = payload.get("user")
+    elevation = payload.get("elevation")
+    return {"message": "Token verified", 
+            "username": username,
+            "elevation": elevation}
+    
+@app.post("/create")
+async def create_post(title: str = Form(...),
+                      content: str = Form(...),
+                      cover_image: UploadFile = File(...)) -> dict:
+    
+    upload_dir = "uploads"
+    # create unique post id to store image(s)
+    post_id = str(uuid.uuid4())
+    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    cover_id = f"{post_id}_cover.webp"
+    upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+
+    # ensure file can be coerced to .webp before uploading to db
+    
+    try:
+        img = Image.open(BytesIO(await cover_image.read()))
+        conv_img = img.convert("RGB")
+        conv_img.save(upload_path, "webp")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+    
+    created_at = datetime.now(timezone.utc)
+    
+    posts.insert_one({
+        "post_id": post_id,
+        "title": title,
+        "content": content,
+        "cover_image": cover_id,
+        "created_at": created_at,
+        "modified_at": created_at
+    })
+    
+    return {"message": "Post created successfully"}
+
+@app.get("/posts")
+async def get_posts(search: str) -> dict:
+    if search != "":
+        all_posts = posts.find({"title": {"$regex": search, "$options": "i"}}, {"_id": 0}).sort("modified_at", -1)
+    else:
+        all_posts = posts.find({}, {"_id": 0}).sort("modified_at", -1)
+    return {"message": "Posts loaded successfully", "posts": list(all_posts)}
+
+@app.get("/post/{id}")
+async def get_post(id: str) -> dict:
+    post = posts.find_one({"post_id": id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"message": "Post loaded successfully", "post": post}
+
+@app.put("/edit")
+async def edit_post(post_id: str = Form(...),
+                    title: str = Form(...),
+                    content: str = Form(...),
+                    cover_image: UploadFile = File(None)) -> dict:
+    
+    post = posts.find_one({"post_id": post_id})
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # check if cover image was uploaded, in which case update the cover image
+    if cover_image:
+        upload_dir = "uploads"
+        cover_id = f"{post_id}_cover.webp"
+        upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+        
+        # Delete the existing cover image to force an update
+        if os.path.exists(upload_path):
+            os.remove(upload_path)
+        
+        try:
+            img = Image.open(BytesIO(await cover_image.read()))
+            conv_img = img.convert("RGB")
+            conv_img.save(upload_path, "webp")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+        
+    print(cover_image)
+        
+    # update post content
+    posts.update_one({"post_id": post_id},
+                     {"$set": {"title": title,
+                               "content": content,
+                               "modified_at": datetime.now(timezone.utc)}})
+    
+    print(cover_image)
+    
+    return {"message": "Post updated successfully"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

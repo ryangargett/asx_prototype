@@ -1,14 +1,39 @@
-export default function Post() {
+import TimeAgo from 'javascript-time-ago';
+import enAU from 'javascript-time-ago/locale/en-AU';
+import ReactTimeAgo from 'react-time-ago';
+import { Link } from 'react-router-dom';
+import { usePost } from './context/PostContext';
+
+TimeAgo.addLocale(enAU)
+
+export default function Post({ post_id, title, cover_image, modified_at }) {
+    const { searchQuery } = usePost();
+    const coverPath = `http://localhost:8000/uploads/${post_id}/${cover_image}?t=${new Date().getTime()}`;
+    const modifiedAt = new Date(modified_at);
+    const localModifiedAt = new Date(modifiedAt.getTime() - (modifiedAt.getTimezoneOffset() * 60000));
+
+    const getSearchMatch = (text, highlight) => {
+        const parts = text.split(new RegExp(`(${highlight})`, "gi"));
+        return parts.map((part, index) =>
+            part.toLowerCase() === highlight.toLowerCase() ? (
+                <span key={index} style={{ backgroundColor: "lightblue" }}>{part}</span>
+            ) : (
+                part
+            )
+        );
+    };
+
     return (
-        <div className="post">
-        <div className="post-img">
-            <img src="https://techcrunch.com/wp-content/uploads/2022/12/lawnmower-Large.jpeg?resize=1200,735"/> 
-        </div>
-        <div className="post-info">
-            <h2>EcoFlow teases full-house battery backup coming later this year</h2>
-            <time>December 15, 2022</time>
-            <p>Today at its special launch event, home backup power giant EcoFlow launched a flurry of new products, including a “Whole-Home Backup Power Solution.”</p>
-        </div>
-        </div>
+        <Link to={`/post/${post_id}`} className="post" id={post_id}>
+            <div className="post-img">
+                <img src={coverPath} alt={title} />
+            </div>
+            <div className="post-info">
+                <h1 className="post-title">{getSearchMatch(title, searchQuery)}</h1>
+                <h3 className="post-date">
+                    Posted: <ReactTimeAgo date={localModifiedAt} locale="en-AU" />
+                </h3>
+            </div>
+        </Link>
     );
 }
