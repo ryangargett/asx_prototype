@@ -45,6 +45,7 @@ users.insert_one({"username": "admin",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
 
+
 pwd_policy = PasswordPolicy.from_names(
     length=8,
     uppercase=1,
@@ -77,7 +78,7 @@ class AuthToken(BaseModel):
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
-              "exp": datetime.now(timezone.utc) + timedelta(minutes=1)}
+              "exp": datetime.now(timezone.utc) + timedelta(minutes=expiry)}
     return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
@@ -237,12 +238,13 @@ async def verify_user(request: Request) -> dict:
 @app.post("/create")
 async def create_post(title: str = Form(...),
                       content: str = Form(...),
-                      cover_image: UploadFile = File(...)) -> dict:
+                      cover_image: UploadFile = File(None)) -> dict:
     
     upload_dir = "uploads"
-    # create unique post id to store image(s)
     post_id = str(uuid.uuid4())
     os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    
+    
     cover_id = f"{post_id}_cover.webp"
     upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
 
@@ -265,8 +267,31 @@ async def create_post(title: str = Form(...),
         "created_at": created_at,
         "modified_at": created_at
     })
-    
+        
     return {"message": "Post created successfully"}
+
+@app.post("/autofill")
+async def autofill_data(pdf: UploadFile = File(...)) -> dict:
+    
+    upload_dir = config("UPLOAD_DIR")
+    def_image = config("DEF_IMAGE")
+    
+    cover_image_url = f"http://localhost:8000/{upload_dir}/{def_image}"
+    
+    post_id = str(uuid.uuid4())
+    pdf_content = await pdf.read()
+    #os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    #pdf_path = os.path.join(os.path.join(upload_dir, post_id), f"{post_id}.pdf")
+    #with open(pdf_path, "wb") as pdf_file:
+    #    pdf_file.write(await pdf.read())
+        
+    return {
+        "message": "Autofill data received!",
+        "title": "Autofill title",
+        "content": "Autofill content",
+        "cover_image": cover_image_url,
+        "post_id": post_id
+    }
 
 @app.get("/posts")
 async def get_posts(search: str) -> dict:
