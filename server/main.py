@@ -15,10 +15,13 @@ from pydantic import BaseModel
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
 from jose import jwt, JWTError
+from markdown import markdown
 from password_strength import PasswordPolicy
 from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
+
+from summarizer import read_pdf, summarize_content, suggest_title
 
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -279,16 +282,26 @@ async def autofill_data(pdf: UploadFile = File(...)) -> dict:
     cover_image_url = f"http://localhost:8000/{upload_dir}/{def_image}"
     
     post_id = str(uuid.uuid4())
-    pdf_content = await pdf.read()
-    #os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
-    #pdf_path = os.path.join(os.path.join(upload_dir, post_id), f"{post_id}.pdf")
-    #with open(pdf_path, "wb") as pdf_file:
-    #    pdf_file.write(await pdf.read())
+    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    pdf_path = os.path.join(os.path.join(upload_dir, post_id), f"{post_id}.pdf")
+    with open(pdf_path, "wb") as pdf_file:
+        pdf_file.write(await pdf.read())
+        
+    parsed_content = read_pdf(pdf_path)
+    summarized_content = markdown(summarize_content(parsed_content))
+    suggested_title = suggest_title(parsed_content)
+    #suggested_sector = suggested_sector(parsed_content)
+    #suggested_img_kwords = suggested_img_kwords(parsed_content)
+    
+    # lookup generic image based on keywords
+    
+    print(summarized_content)
+    
         
     return {
         "message": "Autofill data received!",
-        "title": "Autofill title",
-        "content": "Autofill content",
+        "title": suggested_title,
+        "content": summarized_content,
         "cover_image": cover_image_url,
         "post_id": post_id
     }

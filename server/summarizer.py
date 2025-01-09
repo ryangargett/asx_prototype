@@ -7,8 +7,23 @@ import pandas as pd
 from decouple import config
 from pypdf import PdfReader
 
-def summarize_content(content: str) -> dict:
+def suggest_title(content: str) -> str:
+    client = openai.Client(api_key=config("OPENAI_KEY"))
+    system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
+    user_prompt = f"""Provide a suggested title for the article based on the provided announcement. This title should include relevant technical indicators / statistics, the company name, and the main topic of the announcement. The title should be concise and informative. Do not include any punctuation or special characters in the title. \n\nEXAMPLES: \n- Warriedar Resources Reports Strong Antimony Recovery Results from Ricciardo Project \n- Great Boulder Resources Hits 8m @ 7.59g/t Au at Saltbush Prospect, Side Well Gold Project, Western Australia \n- Critical Resources Hits 34.9m @ 1.02% Li₂O at Mavis Lake Project, Ontario \n\nCOMPANY ANNOUNCEMENT: {content} \n\nSUGGESTED TITLE:"""
     
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    
+    suggested_title = response.choices[0].message.content
+    return suggested_title
+
+def summarize_content(content: str) -> dict:
     client = openai.Client(api_key=config("OPENAI_KEY"))
     
     system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
@@ -53,24 +68,8 @@ def summarize_content(content: str) -> dict:
         ]
     )
     
-    user_title_prompt = f"""Provide a suggested title for the article based on the provided announcement. This title should include relevant technical indicators / statistics, the company name, and the main topic of the announcement. The title should be concise and informative. Do not include any punctuation or special characters in the title. \n\nEXAMPLES: \n- Warriedar Resources Reports Strong Antimony Recovery Results from Ricciardo Project \n- Great Boulder Resources Hits 8m @ 7.59g/t Au at Saltbush Prospect, Side Well Gold Project, Western Australia \n- Critical Resources Hits 34.9m @ 1.02% Li₂O at Mavis Lake Project, Ontario \n\nCOMPANY ANNOUNCEMENT: {content} \n\nSUGGESTED TITLE:"""
-    
     summarized_content = response.choices[0].message.content
-    
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_title_prompt},
-        ]
-    )
-    
-    suggested_title = response.choices[0].message.content
-    
-    return {
-        "title": suggested_title,
-        "content": summarized_content
-    }
+    return summarized_content
     
 def read_pdf(in_file: str) -> str:
     
@@ -86,8 +85,4 @@ if __name__ == "__main__":
     
     parsed_content = read_pdf("examples/example.pdf")
     summarized_content = summarize_content(parsed_content)
-    with open("summarized_content.txt", "w") as file:
-        file.write(summarized_content["content"])
-        
-    print(summarized_content["title"])
     

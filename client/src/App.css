@@ -126,6 +126,10 @@ div.post-page div.post-content {
   @apply underline text-blue-600 hover:text-blue-800;
 }
 
+div.create-post div.article-content { 
+  @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-4; /* Added top margin and paragraph spacing */
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   @apply w-2;

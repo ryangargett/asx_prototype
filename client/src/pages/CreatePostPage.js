@@ -87,48 +87,52 @@ export default function CreatePostPage() {
     };
 
     return (
-        <form onSubmit={createPost}>
-            <h1>Autofill from PDF</h1>
-            <div 
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                style={{
-                    border: dragging ? "2px dashed #000" : "2px solid #ccc",
-                    padding: "20px",
-                    marginTop: "10px",
-                    textAlign: "center"
-                }}
-            >
-                {pdf ? pdf.name : "Drag and drop a PDF file here or click to upload"}
-            </div>
-            <div>
-                <h1>OR</h1>
-                <h1>Create manually</h1>
-            </div>
-            <input 
-                type="text" 
-                placeholder={"Title"} 
-                value={title} 
-                onChange={ev => setTitle(ev.target.value)} 
-            />
-            <input 
-                type="file"
-                ref={coverImageInputRef}
-                onChange={ev => {
-                    setCoverImage(ev.target.files[0]);
-                    setCoverImageUrl(URL.createObjectURL(ev.target.files[0]));
-                }}
-            />
-            {coverImageUrl && (
-                <div>
-                    <img src={coverImageUrl} alt="Cover" style={{ width: "100px", height: "100px" }} />
+        <div className="create-post">
+            <form onSubmit={createPost}>
+                <h1>Autofill from PDF</h1>
+                <div 
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    style={{
+                        border: dragging ? "2px dashed #000" : "2px solid #ccc",
+                        padding: "20px",
+                        marginTop: "10px",
+                        textAlign: "center"
+                    }}
+                >
+                    {pdf ? pdf.name : "Drag and drop a PDF file here or click to upload"}
                 </div>
-            )}
-            <Editor 
-                onChange={setContent} value={content}>
-            </Editor>
-            <button style={{marginTop:"5px"}}>Create Post</button>
-        </form>
+                <div>
+                    <h1>OR</h1>
+                    <h1>Create manually</h1>
+                </div>
+                <input 
+                    type="text" 
+                    placeholder={"Title"} 
+                    value={title} 
+                    onChange={ev => setTitle(ev.target.value)} 
+                />
+                <input 
+                    type="file"
+                    ref={coverImageInputRef}
+                    onChange={ev => {
+                        setCoverImage(ev.target.files[0]);
+                        setCoverImageUrl(URL.createObjectURL(ev.target.files[0]));
+                    }}
+                />
+                {coverImageUrl && (
+                    <div>
+                        <img src={coverImageUrl} alt="Cover" style={{ width: "100px", height: "100px" }} />
+                    </div>
+                )}
+                <div className="article-content">
+                    <Editor 
+                        onChange={setContent} value={content}>
+                    </Editor>
+                </div>
+                <button style={{marginTop:"5px"}}>Create Post</button>
+            </form>
+        </div>
     )
 }
