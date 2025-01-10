@@ -47,7 +47,7 @@ export default function EditPostPage() {
                 }
             });
 
-            console.log(response.data.message);
+            console.log(response.data);
             setCoverImage(cover_image + `?t=${new Date().getTime()}`);
         } catch (error) {
             if (error.response && error.response.data && error.response.data.detail) {

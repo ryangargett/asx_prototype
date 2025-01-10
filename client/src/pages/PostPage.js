@@ -7,6 +7,7 @@ import axios from "axios"
 export default function PostPage() {
 
     const [post, setPost] = useState(null)
+    const [hasPDF, setHasPDF] = useState(false)
     const params = useParams()
     const { elevation } = useUser();
 
@@ -28,10 +29,15 @@ export default function PostPage() {
         return <div>Loading...</div>;
     }
 
+    const isDefaultImg = post.cover_image.includes("GENERIC/PLACEHOLDER.svg")
+    const imgURL = isDefaultImg 
+        ? "http://localhost:8000/uploads/GENERIC/PLACEHOLDER.svg"
+        : `http://localhost:8000/uploads/${post.post_id}/${post.cover_image}?t=${new Date().getTime()}`;
+
     return (
         <div className="post-page">
             <div className="post-img">
-                <img src={`http://localhost:8000/uploads/${post.post_id}/${post.cover_image}?t=${new Date().getTime()}`} alt={post.title} />
+                <img src={imgURL} alt={post.title} />
             </div>
             <h1 className="post-title">
                 {post.title}

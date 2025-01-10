@@ -58,10 +58,11 @@ export default function CreatePostPage() {
 
         const postData = new FormData();
         postData.append("title", title);
+        postData.append("content", content);
+        postData.append("cover_image_url", coverImageUrl); // Include the cover image URL
         if (cover_image) {
             postData.append("cover_image", cover_image);
         }
-        postData.append("content", content);
         if (postID) {
             postData.append("post_id", postID);
         }
@@ -118,6 +119,7 @@ export default function CreatePostPage() {
                 setContent(response.data.content);
                 setCoverImageUrl(response.data.cover_image);
                 setPostID(response.data.post_id);
+                console.log(postID);
             } catch (error) {
                 alert("An unexpected error occurred when attempting autofill, please try again later: " + error);
             }
