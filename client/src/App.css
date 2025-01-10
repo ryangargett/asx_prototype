@@ -122,8 +122,20 @@ div.post-page div.post-content {
   @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-2; /* Added top margin and decreased paragraph spacing */
 }
 
+div.post-page div.pdf-header {
+  @apply text-2xl font-bold mt-8 mb-4 text-gray-800;
+}
+
+div.post-page div.pdf-content {
+  @apply border border-gray-300 rounded-lg overflow-hidden shadow-md;
+}
+
 .edit-post {
   @apply underline text-blue-600 hover:text-blue-800;
+}
+
+div.create-post div.article-content { 
+  @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-4; /* Added top margin and paragraph spacing */
 }
 
 /* Custom scrollbar */
@@ -137,4 +149,20 @@ div.post-page div.post-content {
 
 ::-webkit-scrollbar-thumb {
   @apply bg-gray-400 rounded-full hover:bg-gray-500;
+}
+
+/* Custom Loader */
+.loader-overlay {
+  @apply fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50;
+}
+
+.loader-spinner {
+  @apply ease-linear rounded-full border-8 border-t-8 border-gray-200 h-32 w-32;
+  border-top-color: #3498db;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
