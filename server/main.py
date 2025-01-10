@@ -248,18 +248,18 @@ async def verify_user(request: Request) -> dict:
 @app.post("/create")
 async def create_post(title: str = Form(...),
                       content: str = Form(...),
-                      cover_image_url: str = Form(...),
                       cover_image: UploadFile = File(None),
+                      cover_image_url: str = Form(None),
                       post_id: str = Form(None)) -> dict:
     
     upload_dir = "uploads"
-    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
+    
+    print(post_id)
     
     if not post_id:
         post_id = str(uuid.uuid4())
-    
-    cover_id = f"{post_id}_cover.webp"
-    upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+        
+    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
 
     # ensure file can be coerced to .webp before uploading to db
     
@@ -271,9 +271,10 @@ async def create_post(title: str = Form(...),
             img = Image.open(BytesIO(await cover_image.read()))
             conv_img = img.convert("RGB")
             conv_img.save(upload_path, "webp")
-            cover_image_url = f"http://localhost:8000/{upload_dir}/{cover_id}"
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+    else:
+        cover_id = cover_image_url
     
     created_at = datetime.now(timezone.utc)
     
@@ -317,7 +318,7 @@ async def autofill_data(pdf: UploadFile = File(...),
     upload_dir = config("UPLOAD_DIR")
     def_image = config("DEF_IMAGE")
     
-    cover_image_url = f"http://localhost:8000/{upload_dir}/{def_image}"
+    cover_image_url = f"{upload_dir}/{def_image}"
     
     post_id = str(uuid.uuid4())
     os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
@@ -384,8 +385,11 @@ async def edit_post(post_id: str = Form(...),
             img = Image.open(BytesIO(await cover_image.read()))
             conv_img = img.convert("RGB")
             conv_img.save(upload_path, "webp")
+            cover_image_url = cover_id
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+    else:
+        cover_image_url = post["cover_image"]
         
     print(cover_image)
         
@@ -393,6 +397,7 @@ async def edit_post(post_id: str = Form(...),
     posts.update_one({"post_id": post_id},
                      {"$set": {"title": title,
                                "content": content,
+                               "cover_image": cover_image_url,
                                "modified_at": datetime.now(timezone.utc)}})
     
     print(cover_image)
