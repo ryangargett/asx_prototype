@@ -40,6 +40,7 @@ except Exception as e:
 db = client["main"]
 users = db["users"]
 posts = db["posts"]
+prompts = db["prompts"]
 users.delete_many({})
 #posts.delete_many({})
 
@@ -77,6 +78,9 @@ class AuthToken(BaseModel):
     message: str
     access_token: str
     token_type: str
+    
+class ProfileRequest(BaseModel):
+    prompt: str
     
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
@@ -272,6 +276,21 @@ async def create_post(title: str = Form(...),
     })
         
     return {"message": "Post created successfully"}
+
+@app.get("/profiles")
+async def get_profiles() -> dict:
+    prompt_profiles = list(prompts.find({}, {"_id": 0}))
+    return {"message": "Prompts loaded successfully", "profiles": prompt_profiles}
+
+@app.post("/add_profile")
+async def add_profile(request: ProfileRequest) -> dict:
+    created_at = datetime.now(timezone.utc)
+    prompts.insert_one({
+            "name": f"prompt_{created_at.strftime('%Y%m%d%H%M%S')}",
+            "prompt": request.prompt,
+            "created_at": created_at
+        })
+    return {"message": "Prompt added successfully"}
 
 @app.post("/autofill")
 async def autofill_data(pdf: UploadFile = File(...)) -> dict:
