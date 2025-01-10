@@ -19,6 +19,7 @@ export default function CreatePostPage() {
     const [profiles, setProfiles] = useState([]);
     const [selectedProfile, setSelectedProfile] = useState("");
     const [userPrompt, setUserPrompt] = useState("");
+    const [promptProfile, setPromptProfile] = useState({});
 
     const navigate = useNavigate();
 
@@ -34,6 +35,23 @@ export default function CreatePostPage() {
     useEffect(() => {
         fetchProfiles();
     }, []);
+
+    const handleProfileChange = async (ev) => {
+        const profileId = ev.target.value;
+        setSelectedProfile(profileId);
+    
+        if (promptProfile[profileId]) {
+            setUserPrompt(promptProfile[profileId]);
+        } else {
+            try {
+                const response = await axios.post("http://localhost:8000/get_profile", { profile_id: profileId });
+                setUserPrompt(response.data.profile.prompt);
+                setPromptProfile(prevState => ({ ...prevState, [profileId]: response.data.profile.prompt }));
+            } catch (error) {
+                console.error("Error fetching profile:", error);
+            }
+        }
+    };
 
     async function createPost(ev) {
         ev.preventDefault();
@@ -132,11 +150,11 @@ export default function CreatePostPage() {
                     <select
                         id="profile-select"
                         value={selectedProfile}
-                        onChange={ev => setSelectedProfile(ev.target.value)}
+                        onChange={handleProfileChange}
                     >
                         <option value="">Select a profile</option>
                         {profiles.map(profile => (
-                            <option key={profile.name} value={profile.prompt}>
+                            <option key={profile.name} value={profile.name}>
                                 {profile.name}
                             </option>
                         ))}

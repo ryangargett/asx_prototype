@@ -40,7 +40,7 @@ except Exception as e:
 db = client["main"]
 users = db["users"]
 posts = db["posts"]
-prompts = db["prompts"]
+profiles = db["profiles"]
 users.delete_many({})
 #posts.delete_many({})
 
@@ -79,8 +79,11 @@ class AuthToken(BaseModel):
     access_token: str
     token_type: str
     
-class ProfileRequest(BaseModel):
+class ProfileAddRequest(BaseModel):
     prompt: str
+    
+class ProfileGetRequest(BaseModel):
+    profile_id: str
     
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
@@ -245,24 +248,32 @@ async def verify_user(request: Request) -> dict:
 @app.post("/create")
 async def create_post(title: str = Form(...),
                       content: str = Form(...),
-                      cover_image: UploadFile = File(None)) -> dict:
+                      cover_image_url: str = Form(...),
+                      cover_image: UploadFile = File(None),
+                      post_id: str = Form(None)) -> dict:
     
     upload_dir = "uploads"
-    post_id = str(uuid.uuid4())
     os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
     
+    if not post_id:
+        post_id = str(uuid.uuid4())
     
     cover_id = f"{post_id}_cover.webp"
     upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
 
     # ensure file can be coerced to .webp before uploading to db
     
-    try:
-        img = Image.open(BytesIO(await cover_image.read()))
-        conv_img = img.convert("RGB")
-        conv_img.save(upload_path, "webp")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+    if cover_image: # if a custom image is provided, upload to server for conversion
+        cover_id = f"{post_id}_cover.webp"
+        upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+        
+        try:
+            img = Image.open(BytesIO(await cover_image.read()))
+            conv_img = img.convert("RGB")
+            conv_img.save(upload_path, "webp")
+            cover_image_url = f"http://localhost:8000/{upload_dir}/{cover_id}"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
     
     created_at = datetime.now(timezone.utc)
     
@@ -279,21 +290,29 @@ async def create_post(title: str = Form(...),
 
 @app.get("/profiles")
 async def get_profiles() -> dict:
-    prompt_profiles = list(prompts.find({}, {"_id": 0}))
-    return {"message": "Prompts loaded successfully", "profiles": prompt_profiles}
+    prompt_profiles = list(profiles.find({}, {"_id": 0}))
+    return {"message": "Prompt profiles loaded successfully", "profiles": prompt_profiles}
 
 @app.post("/add_profile")
-async def add_profile(request: ProfileRequest) -> dict:
+async def add_profile(request: ProfileAddRequest) -> dict:
     created_at = datetime.now(timezone.utc)
-    prompts.insert_one({
+    profiles.insert_one({
             "name": f"prompt_{created_at.strftime('%Y%m%d%H%M%S')}",
             "prompt": request.prompt,
             "created_at": created_at
         })
-    return {"message": "Prompt added successfully"}
+    return {"message": "Prompt Profile added successfully"}
+
+@app.post("/get_profile")
+async def get_profile(request: ProfileGetRequest) -> dict:
+    profile = profiles.find_one({"name": request.profile_id}, {"_id": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    return {"message": "Prompt profile loaded successfully", "profile": profile}
 
 @app.post("/autofill")
-async def autofill_data(pdf: UploadFile = File(...)) -> dict:
+async def autofill_data(pdf: UploadFile = File(...),
+                        user_prompt: str = Form(...)) -> dict:
     
     upload_dir = config("UPLOAD_DIR")
     def_image = config("DEF_IMAGE")
@@ -307,7 +326,7 @@ async def autofill_data(pdf: UploadFile = File(...)) -> dict:
         pdf_file.write(await pdf.read())
         
     parsed_content = read_pdf(pdf_path)
-    summarized_content = markdown(summarize_content(parsed_content))
+    summarized_content = markdown(summarize_content(parsed_content, user_prompt))
     suggested_title = suggest_title(parsed_content)
     #suggested_sector = suggested_sector(parsed_content)
     #suggested_img_kwords = suggested_img_kwords(parsed_content)
