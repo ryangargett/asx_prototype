@@ -7,7 +7,7 @@ export default function HomePage() {
 
     useEffect(() => {
         fetchPosts();
-    }, [searchQuery]);
+    }, [searchQuery, fetchPosts]);
 
     return (
         <>

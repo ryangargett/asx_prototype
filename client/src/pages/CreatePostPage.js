@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor from "../Editor";
 import "react-quill-new/dist/quill.snow.css";
@@ -11,11 +11,29 @@ export default function CreatePostPage() {
     const [content, setContent] = useState("");
     const [pdf, setPdf] = useState(null);
     const [postID, setPostID] = useState(null);
+
     const [dragging, setDragging] = useState(false);
     const [loading, setLoading] = useState(false);
     const coverImageInputRef = useRef(null);
 
+    const [profiles, setProfiles] = useState([]);
+    const [selectedProfile, setSelectedProfile] = useState("");
+    const [userPrompt, setUserPrompt] = useState("");
+
     const navigate = useNavigate();
+
+    const fetchProfiles = async () => {
+        try {
+            const response = await axios.get("http://localhost:8000/profiles");
+            setProfiles(response.data.profiles);
+        } catch (error) {
+            console.error("Error fetching profiles:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchProfiles();
+    }, []);
 
     async function createPost(ev) {
         ev.preventDefault();
@@ -70,6 +88,7 @@ export default function CreatePostPage() {
             setPdf(file);
             const formData = new FormData();
             formData.append("pdf", file);
+            formData.append("user_prompt", userPrompt);
             try {
                 const response = await axios.post("http://localhost:8000/autofill", formData, {
                     headers: {
@@ -89,6 +108,17 @@ export default function CreatePostPage() {
         }
     };
 
+    const handleAddProfile = async () => {
+        try {
+            const response = await axios.post("http://localhost:8000/add_profile", { prompt: userPrompt });
+            console.log(response.data.message);
+            await fetchProfiles();
+            setUserPrompt("");
+        } catch (error) {
+            console.error("Error adding profile:", error);
+        }
+    };
+
     return (
         <div className="create-post">
             {loading && (
@@ -97,6 +127,30 @@ export default function CreatePostPage() {
                 </div>
             )}
             <form onSubmit={createPost}>
+            <div>
+                    <label htmlFor="profile-select">Select a Prompt Profile:</label>
+                    <select
+                        id="profile-select"
+                        value={selectedProfile}
+                        onChange={ev => setSelectedProfile(ev.target.value)}
+                    >
+                        <option value="">Select a profile</option>
+                        {profiles.map(profile => (
+                            <option key={profile.name} value={profile.prompt}>
+                                {profile.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="user-prompt">User Prompt:</label>
+                    <div className="prompt-content">
+                        <Editor 
+                            onChange={setUserPrompt} value={userPrompt}>
+                        </Editor>
+                    </div>
+                </div>
+                <button type="button" onClick={handleAddProfile}>Add</button>
                 <h1>Autofill from PDF</h1>
                 <div 
                     onDragOver={handleDragOver}
