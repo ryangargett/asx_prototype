@@ -21,7 +21,8 @@ from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
 
-from summarizer import read_pdf, summarize_content, suggest_title
+from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
+from image_search import get_url_from_keyword
 
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -327,20 +328,17 @@ async def autofill_data(pdf: UploadFile = File(...),
         pdf_file.write(await pdf.read())
         
     parsed_content = read_pdf(pdf_path)
-    summarized_content = markdown(summarize_content(parsed_content, user_prompt))
-    suggested_title = suggest_title(parsed_content)
+    #summarized_content = markdown(summarize_content(parsed_content, user_prompt))
+    #suggested_title = suggest_title(parsed_content)
     #suggested_sector = suggested_sector(parsed_content)
-    #suggested_img_kwords = suggested_img_kwords(parsed_content)
-    
-    # lookup generic image based on keywords
-    
-    print(summarized_content)
+    suggested_image_kwords = suggest_image_kwords(parsed_content)
+    cover_image_url = get_url_from_keyword(suggested_image_kwords)
     
         
     return {
         "message": "Autofill data received!",
-        "title": suggested_title,
-        "content": summarized_content,
+        #"title": suggested_title if suggested_title else "Untitled",
+        #"content": summarized_content if summarized_content else "No content",
         "cover_image": cover_image_url,
         "post_id": post_id
     }
