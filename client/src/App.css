@@ -122,6 +122,14 @@ div.post-page div.post-content {
   @apply prose prose-lg max-w-none text-gray-700 mt-8 space-y-2; /* Added top margin and decreased paragraph spacing */
 }
 
+div.post-page div.pdf-header {
+  @apply text-2xl font-bold mt-8 mb-4 text-gray-800;
+}
+
+div.post-page div.pdf-content {
+  @apply border border-gray-300 rounded-lg overflow-hidden shadow-md;
+}
+
 .edit-post {
   @apply underline text-blue-600 hover:text-blue-800;
 }

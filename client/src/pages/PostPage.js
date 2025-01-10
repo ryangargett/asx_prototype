@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { useUser } from '../context/UserContext'
+import { useUser } from "../context/UserContext"
 import axios from "axios"
-
 
 export default function PostPage() {
 
@@ -19,11 +18,23 @@ export default function PostPage() {
                 console.log(response.data.message)
                 console.log(response.data.post)
                 setPost(response.data.post)
+                checkPDFExists(response.data.post.post_id)
             })
             .catch(error => {
                 console.error("There was an error fetching the post!", error)
             })
     }, [params.id])
+
+    const checkPDFExists = async (post_id) => {
+        try {
+            const response = await axios.head(`http://localhost:8000/uploads/${post_id}/${post_id}.pdf`)
+            if (response.status === 200) {
+                setHasPDF(true)
+            }
+        } catch (error) {
+            setHasPDF(false)
+        }
+    }
 
     if (!post) {
         return <div>Loading...</div>;
@@ -46,6 +57,14 @@ export default function PostPage() {
                 <Link to={`/edit/${post.post_id}`} className="edit-post">Edit Post</Link>
             )}
             <div className="post-content" dangerouslySetInnerHTML={{__html:post.content}}></div>
+            <div className="pdf-header">
+                <h1>Raw file:</h1>
+            </div>
+            {hasPDF && (
+                <div className="pdf-content">
+                    <iframe src={`http://localhost:8000/uploads/${post.post_id}/${post.post_id}.pdf`} width="100%" height="600px"></iframe>
+                </div>
+            )}
         </div>
     )
 
