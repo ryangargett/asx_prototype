@@ -413,5 +413,42 @@ async def edit_post(post_id: str = Form(...),
     
     return {"message": "Post updated successfully"}
 
+@app.get("/update_videos")
+async def update_videos() -> dict:
+    
+    YOUTUBE_API_KEY = "AIzaSyBfYDQgptHzoFfC3jv2VqyyJeh_dMYQ7Js"
+    PLAYLIST_ID = "PLIlxfUBOi-L3R7ShFFzf3YXT1NOgW_BsQ"
+    
+    next_page_token = ""
+    videos_collection = db["videos"]
+    
+    while next_page_token is not None:
+        response = requests.get(
+            f"https://www.googleapis.com/youtube/v3/playlistItems?key={YOUTUBE_API_KEY}&playlistId={PLAYLIST_ID}&part=snippet&pageToken={next_page_token}"
+        )
+        playlist_metadata = response.json()
+        video_metadata = playlist_metadata.get("items", [])
+        if video_metadata:
+            for video in video_metadata:
+                video_id = video["snippet"]["resourceId"]["videoId"]
+                existing_video = videos_collection.find_one({"snippet.resourceId.videoId": video_id})
+                
+                if existing_video:
+                    # Update existing video metadata
+                    videos_collection.update_one({"snippet.resourceId.videoId": video_id}, {"$set": video})
+                else:
+                    # Insert new video metadata
+                    videos_collection.insert_one(video)
+                    
+        next_page_token = playlist_metadata.get("nextPageToken")
+    
+    return {"message": "Videos updated successfully"}
+                
+@app.get("/cached_videos")
+async def get_cached_videos() -> dict:
+    videos_collection = db["videos"]    
+    cached_videos = list(videos_collection.find({}, {"_id": 0}))
+    return {"message": "Videos fetched successfully", "videos": cached_videos}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

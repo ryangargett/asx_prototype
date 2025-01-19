@@ -28,6 +28,7 @@ export default function Header() {
                     <>
                         <Link to="/profile">Welcome, {username}!</Link>
                         {elevation === "admin" && <Link to="/create">Create Post</Link>}
+                        <Link to="/videos">Videos</Link>
                         <Link to="/" onClick={logoutUser}>Logout</Link>
                     </>
                 )}

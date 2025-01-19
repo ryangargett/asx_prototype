@@ -4,10 +4,11 @@ import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import CreatePostPage from "./pages/CreatePostPage";
-import { UserProvider } from "./context/UserContext";
-import { PostProvider } from "./context/PostContext";
 import PostPage from "./pages/PostPage";
 import EditPostPage from "./pages/EditPostPage";
+import VideoPage from "./pages/VideoPage";
+import { UserProvider } from "./context/UserContext";
+import { PostProvider } from "./context/PostContext";
 import {Route, Routes} from "react-router-dom";
 
 
@@ -23,6 +24,7 @@ function App() {
             <Route path="/create" element = {<CreatePostPage/>} />
             <Route path="/post/:id" element = {<PostPage/>} />
             <Route path="/edit/:id" element = {<EditPostPage/>} />
+            <Route path="/videos" element = {<VideoPage/>} />
           </Route>
         </Routes>
       </PostProvider>

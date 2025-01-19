@@ -1,13 +1,25 @@
 import { useEffect } from "react";
 import Post from "../Post";
 import { usePost } from "../context/PostContext";
+import axios from "axios";
 
 export default function HomePage() {
     const { posts, searchQuery, setSearchQuery, fetchPosts } = usePost();
 
     useEffect(() => {
         fetchPosts();
+        updateVideos();
     }, [searchQuery]);
+
+    const updateVideos = async () => {
+        axios.get("http://localhost:8000/update_videos")
+            .then(response => {
+                console.log(response.data.message);
+            })
+            .catch(error => {
+                console.error("There was an error updating the videos!", error);
+            });
+    };
 
     return (
         <>
