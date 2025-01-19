@@ -7,6 +7,43 @@ import pandas as pd
 from decouple import config
 from pypdf import PdfReader
 
+def suggest_image_kwords(content: str) -> str:
+    
+    client = openai.Client(api_key=config("OPENAI_KEY"))
+    
+    system_prompt = """You are a highly intelligent AI assistant trained to extract company information from a technical report."""
+    user_prompt = f"""Determine the ASX company(s) mentioned in this report. Provide a list of the companies mentioned in the report. Provide AT MAXIMUM THREE related companies, ordered by relevance. The list should be formatted as a string of comma seperated company names. Do not include any punctuation or special characters in the company names. Do not include any companies that are not mentioned in the report. Do not include any companies that are not listed on the ASX. Do not include any companies that are not relevant to the report. COMPANY ANNOUNCEMENT: {content}\n\nCOMPANIES:"""
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    
+    suggested_companies = response.choices[0].message.content
+    companies = suggested_companies.split(", ")
+    if len(companies) > 3:
+        suggested_companies = ", ".join([f"{company} ASX" for company in companies[:3]])
+    print(suggested_companies)
+    
+    system_prompt = "You are a highly intelligent AI assistant trained to generate keywords based on provided ASX company(s)."
+    user_prompt = f"""Provide a list of 3 keywords that could be used to search for an image relevant to the provided ASX companies. In the event that multiple companies are provided, the keywords should be most relevant to the first company, then the second company, and finally the third. This list should be formatted as a string of comma seperated keywords / phrases. These keywords MUST be completely associated with the provided company(s), and should not reference other companies, projects or otherwise conflicting data. The keywords must be as generic as possible whilst still relating to the given company. As an example, you are provided a company announcement from Clara Resources (ASX:C7A). This company primarily operates in the coal coking, cobalt mining and nickel mining sectors. Therefore, keywords associated with this company could be \"coal coking, cobalt mining, nickel mining\". Do not generate any keywords associated with the ASX, Australian Stock Market, Finance or Stock Market. Avoid keywords that could lead to tabular data. Do not include any punctuation or special characters in the keywords. DO NOT GENERATE MORE THAN THREE KEYWORDS.\n\nCOMPANIES: {suggested_companies}\n\nKEYWORDS:"""
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    
+    
+    suggested_image_kwords = response.choices[0].message.content
+    print(suggested_image_kwords)
+    return suggested_image_kwords
+
 def suggest_title(content: str) -> str:
     client = openai.Client(api_key=config("OPENAI_KEY"))
     system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""

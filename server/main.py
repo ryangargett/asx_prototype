@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import os
+import requests
 import uuid
 
 from io import BytesIO
@@ -21,7 +22,8 @@ from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
 
-from summarizer import read_pdf, summarize_content, suggest_title
+from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
+from image_search import get_url_from_keyword
 
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -42,7 +44,7 @@ users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
 users.delete_many({})
-#posts.delete_many({})
+posts.delete_many({})
 
 users.insert_one({"username": "admin", 
                   "email": "",
@@ -252,7 +254,7 @@ async def create_post(title: str = Form(...),
                       cover_image_url: str = Form(None),
                       post_id: str = Form(None)) -> dict:
     
-    upload_dir = "uploads"
+    upload_dir = config("UPLOAD_DIR")
     
     print(post_id)
     
@@ -263,10 +265,13 @@ async def create_post(title: str = Form(...),
 
     # ensure file can be coerced to .webp before uploading to db
     
+    cover_id = f"{post_id}_cover.webp"
+    upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
+    
+    print(config("DEF_IMAGE"))
+    print(cover_image_url)
+    
     if cover_image: # if a custom image is provided, upload to server for conversion
-        cover_id = f"{post_id}_cover.webp"
-        upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
-        
         try:
             img = Image.open(BytesIO(await cover_image.read()))
             conv_img = img.convert("RGB")
@@ -274,7 +279,17 @@ async def create_post(title: str = Form(...),
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
     else:
-        cover_id = cover_image_url
+        if cover_image_url != "http://localhost:8000/uploads/GENERIC/PLACEHOLDER.svg":
+            try:
+                img = Image.open(BytesIO(requests.get(cover_image_url).content))
+                conv_img = img.convert("RGB")
+                conv_img.save(upload_path, "webp")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
+        else:
+            cover_id = config("DEF_IMAGE")
+            
+            #
     
     created_at = datetime.now(timezone.utc)
     
@@ -316,9 +331,6 @@ async def autofill_data(pdf: UploadFile = File(...),
                         user_prompt: str = Form(...)) -> dict:
     
     upload_dir = config("UPLOAD_DIR")
-    def_image = config("DEF_IMAGE")
-    
-    cover_image_url = f"{upload_dir}/{def_image}"
     
     post_id = str(uuid.uuid4())
     os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
@@ -330,17 +342,14 @@ async def autofill_data(pdf: UploadFile = File(...),
     summarized_content = markdown(summarize_content(parsed_content, user_prompt))
     suggested_title = suggest_title(parsed_content)
     #suggested_sector = suggested_sector(parsed_content)
-    #suggested_img_kwords = suggested_img_kwords(parsed_content)
-    
-    # lookup generic image based on keywords
-    
-    print(summarized_content)
+    suggested_image_kwords = suggest_image_kwords(parsed_content)
+    cover_image_url = get_url_from_keyword(suggested_image_kwords)
     
         
     return {
         "message": "Autofill data received!",
-        "title": suggested_title,
-        "content": summarized_content,
+        "title": suggested_title if suggested_title else "Untitled",
+        "content": summarized_content if summarized_content else "No content",
         "cover_image": cover_image_url,
         "post_id": post_id
     }
