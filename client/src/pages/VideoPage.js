@@ -29,14 +29,16 @@ export default function VideoPage() {
             {selectedVideo && (
                 <div className="video-player-overlay" onClick={() => setSelectedVideo(null)}>
                     <div className="video-player-container" onClick={e => e.stopPropagation()}>
-                        <iframe
-                            width="560"
-                            height="315"
-                            src={`https://www.youtube.com/embed/${selectedVideo}`}
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            title="YouTube video player"
-                        ></iframe>
+                        <div className="video-player">
+                            <iframe
+                                width="100%"
+                                height="100%"
+                                src={`https://www.youtube.com/embed/${selectedVideo}?vq=hd1080`}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                                title="YouTube video player"
+                            ></iframe>
+                        </div>
                     </div>
                 </div>
             )}
