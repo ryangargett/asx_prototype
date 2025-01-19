@@ -7,7 +7,7 @@ import axios from 'axios';
 export default function CreatePostPage() {
     const [title, setTitle] = useState("");
     const [cover_image, setCoverImage] = useState(null);
-    const [coverImageUrl, setCoverImageUrl] = useState("");
+    const [coverImageUrl, setCoverImageUrl] = useState("http://localhost:8000/uploads/GENERIC/PLACEHOLDER.svg");
     const [content, setContent] = useState("");
     const [pdf, setPdf] = useState(null);
     const [postID, setPostID] = useState(null);
