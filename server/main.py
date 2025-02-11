@@ -1,17 +1,19 @@
 from datetime import datetime, timedelta, timezone
 import os
+import mimetypes
 import requests
+import shutil
 import uuid
-
-from io import BytesIO
-
-import uvicorn
 
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
+from io import BytesIO
 from pydantic import BaseModel
+
+import uvicorn
+import whisper
 
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
@@ -21,6 +23,7 @@ from password_strength import PasswordPolicy
 from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
+
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 from image_search import get_url_from_keyword
@@ -107,6 +110,16 @@ def verify_token(token: str):
         return payload
     except JWTError:
         raise HTTPException(status_code=403, detail="Invalid token")
+    
+def transcribe_video(video_path: str) -> str:
+    try:
+        model = whisper.load_model("base.en")
+        options = whisper.DecodingOptions(language="en")
+        transcription = model.transcribe(video_path)
+        return transcription["text"]
+    except Exception as e:
+        print(f"Error transcribing video: {e}")
+        raise HTTPException(status_code=500, detail=f"Error transcribing video: {e}")
     
 @app.get("/")
 async def read_root():
@@ -288,8 +301,6 @@ async def create_post(title: str = Form(...),
                 raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
         else:
             cover_id = config("DEF_IMAGE")
-            
-            #
     
     created_at = datetime.now(timezone.utc)
     
@@ -327,33 +338,55 @@ async def get_profile(request: ProfileGetRequest) -> dict:
     return {"message": "Prompt profile loaded successfully", "profile": profile}
 
 @app.post("/autofill")
-async def autofill_data(pdf: UploadFile = File(...),
+async def autofill_data(file: UploadFile = File(...),
                         user_prompt: str = Form(...)) -> dict:
     
     upload_dir = config("UPLOAD_DIR")
     
     post_id = str(uuid.uuid4())
-    os.makedirs(os.path.join(upload_dir, post_id), exist_ok=True)
-    pdf_path = os.path.join(os.path.join(upload_dir, post_id), f"{post_id}.pdf")
-    with open(pdf_path, "wb") as pdf_file:
-        pdf_file.write(await pdf.read())
-        
-    parsed_content = read_pdf(pdf_path)
-    summarized_content = markdown(summarize_content(parsed_content, user_prompt))
-    suggested_title = suggest_title(parsed_content)
-    #suggested_sector = suggested_sector(parsed_content)
-    suggested_image_kwords = suggest_image_kwords(parsed_content)
-    cover_image_url = get_url_from_keyword(suggested_image_kwords)
+    post_dir = os.path.join(upload_dir, post_id)
+    os.makedirs(post_dir, exist_ok=True)
+    file_path = os.path.join(post_dir, file.filename)
     
+    try:
+        with open(file_path, "wb") as in_file:
+            in_file.write(await file.read())
+            
+        file_type, _ = mimetypes.guess_type(file_path)
+        if file_type == "application/pdf":
+            parsed_content = read_pdf(file_path)
+            summarized_content = markdown(summarize_content(parsed_content, user_prompt))
+            suggested_title = suggest_title(parsed_content)
+            #suggested_sector = suggested_sector(parsed_content)
+            suggested_image_kwords = suggest_image_kwords(parsed_content)
+            cover_image_url = get_url_from_keyword(suggested_image_kwords)
+        elif file_type.startswith("video"):
+            with open(file_path, "r") as in_file:
+                parsed_content = transcribe_video(file_path)
+                summarized_content = markdown(summarize_content(parsed_content, user_prompt))
+                suggested_title = suggest_title(parsed_content)
+                #suggested_sector = suggested_sector(parsed_content)
+                suggested_image_kwords = suggest_image_kwords(parsed_content)
+                cover_image_url = get_url_from_keyword(suggested_image_kwords)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid file type")
         
-    return {
-        "message": "Autofill data received!",
-        "title": suggested_title if suggested_title else "Untitled",
-        "content": summarized_content if summarized_content else "No content",
-        "cover_image": cover_image_url,
-        "post_id": post_id
-    }
-
+            
+        return {
+            "message": "Autofill data received!",
+            "title": suggested_title if suggested_title else "Untitled",
+            "content": summarized_content if summarized_content else "No content",
+            "cover_image": cover_image_url,
+            "post_id": post_id
+        }
+    
+    except Exception as e:
+        if os.path.exists(file_path):
+                os.remove(file_path)
+        if os.path.exists(post_dir):
+            shutil.rmtree(post_dir)
+        raise HTTPException(status_code=500, detail=f"Error processing file: {e}")
+                          
 @app.get("/posts")
 async def get_posts(search: str) -> dict:
     if search != "":
