@@ -27,6 +27,7 @@ from pymongo import MongoClient
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 from image_search import get_url_from_keyword
+from stock_fetcher import get_asx_tickers, get_company_info
 
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -46,8 +47,10 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
+stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
+stocks.delete_many({})
 
 users.insert_one({"username": "admin", 
                   "email": "",
@@ -482,6 +485,28 @@ async def get_cached_videos() -> dict:
     videos_collection = db["videos"]    
     cached_videos = list(videos_collection.find({}, {"_id": 0}))
     return {"message": "Videos fetched successfully", "videos": cached_videos}
+
+
+@app.put("/update_stocks")
+async def update_stocks() -> dict:
+    tickers = get_asx_tickers()
+    tickers = tickers[:10]
+    print(f"Discovered {len(tickers)} ASX-listed companies.")
+    stocks_collection = db["stocks"]
+    
+    for ticker in tickers:
+        stock = get_company_info(ticker)
+        if stock is not None:
+            existing_stock = stocks_collection.find_one({"ticker": ticker})
+            
+            if existing_stock:
+                # Update existing stock metadata
+                stocks_collection.update_one({"ticker": ticker}, {"$set": stock})
+            else:
+                # Insert new stock metadata
+                stocks_collection.insert_one(stock)
+            
+    return {"message": "Stocks updated successfully"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
