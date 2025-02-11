@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Editor from "../Editor";
 import "react-quill-new/dist/quill.snow.css";
 import axios from 'axios';
+import { fileTypeFromBuffer } from 'file-type';
 
 export default function CreatePostPage() {
     const [title, setTitle] = useState("");
@@ -103,28 +104,41 @@ export default function CreatePostPage() {
         setDragging(false);
         setLoading(true);
         const file = ev.dataTransfer.files[0];
-        if (file && file.type === "application/pdf") {
-            setPdf(file);
-            const formData = new FormData();
-            formData.append("pdf", file);
-            formData.append("user_prompt", userPrompt);
-            try {
-                const response = await axios.post("http://localhost:8000/autofill", formData, {
-                    headers: {
-                        "Content-Type": "multipart/form-data"
-                    }
-                });
-                setLoading(false);
-                setTitle(response.data.title);
-                setContent(response.data.content);
-                setCoverImageUrl(response.data.cover_image);
-                setPostID(response.data.post_id);
-                console.log(postID);
-            } catch (error) {
-                alert("An unexpected error occurred when attempting autofill, please try again later: " + error);
-            }
-        } else {
-            alert("Please upload a valid PDF file.");
+        
+        console.log(userPrompt);
+
+        // Check the file type
+        const buffer = await file.arrayBuffer();
+        const fileType = await fileTypeFromBuffer(buffer);
+        const mimeType = fileType ? fileType.mime : null;
+        if (!mimeType || (!mimeType.startsWith("application/pdf") && !mimeType.startsWith("video/"))) {
+            alert("Invalid file type. Please upload a PDF or video file.");
+            setLoading(false);
+            return;
+        }
+    
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("user_prompt", userPrompt);
+
+        console.log(file);
+        console.log(userPrompt);
+        
+        try {
+            const response = await axios.post("http://localhost:8000/autofill", formData, {
+                headers: {
+                    "Content-Type": "multipart/form-data"
+                }
+            });
+            setLoading(false);
+            setTitle(response.data.title);
+            setContent(response.data.content);
+            setCoverImageUrl(response.data.cover_image);
+            setPostID(response.data.post_id);
+            console.log(postID);
+        } catch (error) {
+            alert("An unexpected error occurred when attempting autofill, please try again later: " + error);
+            setLoading(false);
         }
     };
 
