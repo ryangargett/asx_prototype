@@ -12,16 +12,17 @@ def lookup_valid_material_subsector(sector: str, subsector: str, desc: str) -> s
             if material in subsector.lower():
                 return subsector.lower()
             
-    diversified_materials = []
+        diversified_materials = []
+            
+        for material in valid_materials:
+            if material in desc.lower():
+                diversified_materials.append(material)
         
-    for material in valid_materials:
-        if material in desc.lower():
-            diversified_materials.append(material)
+        if len(diversified_materials) > 0:      
+            return ", ".join(diversified_materials)
     
-    if len(diversified_materials) > 0:      
-        return ", ".join(diversified_materials)
     else:
-        return subsector.lower()
+        return subsector
         
 
 def get_asx_tickers():
@@ -51,7 +52,11 @@ def get_company_info(ticker: str) -> dict:
         sector = info.get("sector", "N/A")
         subsector = info.get("industry", "N/A")
         summary = info.get("longBusinessSummary", "N/A")
-        if "materials" in sector.lower():
+        
+        valid_sectors = ["materials", "energy"]
+        
+        
+        if sector.lower() in valid_sectors:
             return {
                 "ticker": ticker,
                 "company_name": long_name,
