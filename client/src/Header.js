@@ -55,7 +55,6 @@ export default function Header() {
     }
 
     async function fetchTickers(query) {
-        console.log("Fetching tickers for query:", query);
         try {
             const response = await axios.post("http://localhost:8000/get_tickers", { search_query: query });
             setTickerResults(response.data.tickers);
@@ -85,11 +84,11 @@ export default function Header() {
                             onChange={handleTickerChange}
                         />
                         {tickerResults.length > 0 && (
-                            <div className="dropdown-menu search-results">
+                            <div className="search-results-dropdown">
                                 {tickerResults.map((result) => (
-                                    <div key={result.ticker} className="dropdown-item search-result-item">
-                                        <span className="ticker">{result.ticker}</span>
-                                        <span className="company-name">{result.company_name}</span>
+                                    <div key={result.ticker} className="search-result-item">
+                                        <span className="search-result-ticker">{result.ticker}</span>
+                                        <span className="search-result-company">{result.company_name}</span>
                                     </div>
                                 ))}
                             </div>
@@ -100,35 +99,29 @@ export default function Header() {
 
             <div className="nav-container">
                 <nav className="main-nav">
-                    <div className="dropdown" ref={materialsDropdownRef}>
+                    <div className="materials-dropdown" ref={materialsDropdownRef}>
                         <button 
-                            className="dropdown-trigger"
+                            className="materials-dropdown-trigger"
                             onClick={() => setIsMaterialsDropdownOpen(!isMaterialsDropdownOpen)}
                         >
                             Materials
                             <ChevronDown size={16} className="dropdown-icon" />
                         </button>
                         {isMaterialsDropdownOpen && (
-                            <div className="dropdown-menu">
-                                <Link to="/materials/iron" className="dropdown-item">Iron</Link>
-                                <Link to="/materials/oil" className="dropdown-item">Oil</Link>
-                                <Link to="/materials/gold" className="dropdown-item">Gold</Link>
-                                <Link to="/materials/silver" className="dropdown-item">Silver</Link>
-                                <Link to="/materials/copper" className="dropdown-item">Copper</Link>
-                                <Link to="/materials/lithium" className="dropdown-item">Lithium</Link>
-                                <Link to="/materials/uranium" className="dropdown-item">Uranium</Link>
+                            <div className="materials-dropdown-menu">
+                                <Link to="/materials/iron" className="materials-dropdown-item">Iron</Link>
+                                <Link to="/materials/oil" className="materials-dropdown-item">Oil</Link>
+                                <Link to="/materials/gold" className="materials-dropdown-item">Gold</Link>
+                                <Link to="/materials/silver" className="materials-dropdown-item">Silver</Link>
+                                <Link to="/materials/copper" className="materials-dropdown-item">Copper</Link>
+                                <Link to="/materials/lithium" className="materials-dropdown-item">Lithium</Link>
+                                <Link to="/materials/uranium" className="materials-dropdown-item">Uranium</Link>
                             </div>
                         )}
                     </div>
-                    <Link to="/energy" className="nav-link">
-                        Energy
-                    </Link>
-                    <Link to="/stocks" className="nav-link">
-                        Stocks
-                    </Link>
-                    <Link to="/videos" className="nav-link">
-                        Videos
-                    </Link>
+                    <Link to="/energy" className="nav-link">Energy</Link>
+                    <Link to="/stocks" className="nav-link">Stocks</Link>
+                    <Link to="/videos" className="nav-link">Videos</Link>
                 </nav>
                 
                 <div className="user-controls">
@@ -144,7 +137,7 @@ export default function Header() {
                         <Twitter size={20} />
                     </a>
                     {username ? (
-                        <div className="dropdown" ref={userDropdownRef}>
+                        <div className="user-dropdown" ref={userDropdownRef}>
                             <button 
                                 className="user-dropdown-trigger"
                                 onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
@@ -153,8 +146,8 @@ export default function Header() {
                                 <ChevronDown size={16} className="dropdown-icon" />
                             </button>
                             {isUserDropdownOpen && (
-                                <div className="dropdown-menu">
-                                    <span onClick={logoutUser} className="user-dropdown-item logout-option">
+                                <div className="user-dropdown-menu">
+                                    <span onClick={logoutUser} className="user-dropdown-item">
                                         Logout
                                     </span>
                                 </div>
