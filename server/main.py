@@ -92,7 +92,10 @@ class ProfileAddRequest(BaseModel):
     
 class ProfileGetRequest(BaseModel):
     profile_id: str
-    
+
+class TickerRequest(BaseModel):
+    search_query: str    
+
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
@@ -504,6 +507,30 @@ async def update_stocks() -> dict:
         stock = get_company_info(ticker)
         
     return {"message": "Stocks updated successfully"}
+
+@app.post("/get_tickers")
+async def get_tickers(request: TickerRequest) -> dict:
+    search_query = request.search_query.lower()
+    print(search_query)
+    stocks_collection = db["stocks"]
+    
+    valid_tickers = []
+    
+    if search_query != "":
+        exact_matches = list(stocks_collection.find({"$or": [{"ticker": search_query}, {"company_name": search_query}]}, {"_id": 0}))
+        print(exact_matches)
+        if exact_matches:
+            valid_tickers = exact_matches
+        else:
+            valid_tickers += list(stocks_collection.find({"ticker": {"$regex": search_query, "$options": "i"}}, {"_id": 0}))
+            valid_tickers += list(stocks_collection.find({"company_name": {"$regex": search_query, "$options": "i"}}, {"_id": 0}))
+            
+    if len(valid_tickers) > 5:
+        valid_tickers = valid_tickers[:5]        
+    
+    print(valid_tickers)
+
+    return {"message": "Stocks fetched successfully", "tickers": valid_tickers}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

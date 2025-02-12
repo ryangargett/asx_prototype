@@ -9,8 +9,11 @@ export default function Header() {
     const navigate = useNavigate();
     const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
     const [isMaterialsDropdownOpen, setIsMaterialsDropdownOpen] = useState(false);
+    const [tickerQuery, setTickerQuery] = useState("");
+    const [tickerResults, setTickerResults] = useState([]);
     const userDropdownRef = useRef(null);
     const materialsDropdownRef = useRef(null);
+    const tickerRef = useRef(null);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -20,11 +23,22 @@ export default function Header() {
             if (materialsDropdownRef.current && !materialsDropdownRef.current.contains(event.target)) {
                 setIsMaterialsDropdownOpen(false);
             }
+            if (tickerRef.current && !tickerRef.current.contains(event.target)) {
+                setTickerResults([]);
+            }
         };
 
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        if (tickerQuery.length > 2) {
+            fetchTickers(tickerQuery);
+        } else {
+            setTickerResults([]);
+        }
+    }, [tickerQuery]);
 
     async function logoutUser() {
         try {
@@ -40,6 +54,20 @@ export default function Header() {
         }
     }
 
+    async function fetchTickers(query) {
+        console.log("Fetching tickers for query:", query);
+        try {
+            const response = await axios.post("http://localhost:8000/get_tickers", { search_query: query });
+            setTickerResults(response.data.tickers);
+        } catch (error) {
+            console.error("Error fetching tickers:", error);
+        }
+    }
+
+    const handleTickerChange = (event) => {
+        setTickerQuery(event.target.value);
+    };
+
     return (
         <div className="header-container">
             <div className="header-top">
@@ -47,13 +75,25 @@ export default function Header() {
                     FINANCIAL WEBSITE
                 </Link>
                 <div className="search-container">
-                    <div className="search-wrapper">
+                    <div className="search-wrapper" ref={tickerRef}>
                         <Search className="search-icon" size={20} />
                         <input
                             type="text"
                             placeholder="Search by keyword or code"
                             className="search-input"
+                            value={tickerQuery}
+                            onChange={handleTickerChange}
                         />
+                        {tickerResults.length > 0 && (
+                            <div className="dropdown-menu search-results">
+                                {tickerResults.map((result) => (
+                                    <div key={result.ticker} className="dropdown-item search-result-item">
+                                        <span className="ticker">{result.ticker}</span>
+                                        <span className="company-name">{result.company_name}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
