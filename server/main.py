@@ -452,15 +452,12 @@ async def edit_post(post_id: str = Form(...),
 @app.get("/update_videos")
 async def update_videos() -> dict:
     
-    YOUTUBE_API_KEY = "AIzaSyBfYDQgptHzoFfC3jv2VqyyJeh_dMYQ7Js"
-    PLAYLIST_ID = "PLIlxfUBOi-L3R7ShFFzf3YXT1NOgW_BsQ"
-    
     next_page_token = ""
     videos_collection = db["videos"]
     
     while next_page_token is not None:
         response = requests.get(
-            f"https://www.googleapis.com/youtube/v3/playlistItems?key={YOUTUBE_API_KEY}&playlistId={PLAYLIST_ID}&part=snippet&pageToken={next_page_token}"
+            f"https://www.googleapis.com/youtube/v3/playlistItems?key={config('YOUTUBE_API_KEY')}&playlistId={config('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
         )
         playlist_metadata = response.json()
         video_metadata = playlist_metadata.get("items", [])
@@ -490,7 +487,7 @@ async def get_cached_videos() -> dict:
 @app.put("/update_stocks")
 async def update_stocks() -> dict:
     tickers = get_asx_tickers()
-    tickers = tickers[:10]
+    tickers = tickers[:100]
     print(f"Discovered {len(tickers)} ASX-listed companies.")
     stocks_collection = db["stocks"]
     
