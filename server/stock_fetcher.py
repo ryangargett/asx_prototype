@@ -3,6 +3,27 @@ import yfinance as yf
 import pandas as pd
 import io
 
+def lookup_valid_material_subsector(sector: str, subsector: str, desc: str) -> str:
+    
+    valid_materials = ["copper", "gold", "silver", "iron", "aluminium", "zinc", "nickel", "cobalt", "lithium", "uranium", "platinum", "oil", "mineral sands", "rare earth", "hydrogen", "graphite", "gas", "lead", "palladium", "potash", "tin", "vanadium"]
+    
+    if "material" in sector.lower():
+        for material in valid_materials:
+            if material in subsector.lower():
+                return subsector.lower()
+            
+    diversified_materials = []
+        
+    for material in valid_materials:
+        if material in desc.lower():
+            diversified_materials.append(material)
+    
+    if len(diversified_materials) > 0:      
+        return ", ".join(diversified_materials)
+    else:
+        return subsector.lower()
+        
+
 def get_asx_tickers():
     """
     Fetches the list of ASX-listed companies and returns a list of tickers.
@@ -26,14 +47,17 @@ def get_company_info(ticker: str) -> dict:
         stock = yf.Ticker(ticker + ".AX")  # Ensure that the correct exchange is specified, potentially add support outside of aus in the future?
         info = stock.info
         
+        long_name = info.get("longName", "N/A")
         sector = info.get("sector", "N/A")
-        if sector != "N/A":
+        subsector = info.get("industry", "N/A")
+        summary = info.get("longBusinessSummary", "N/A")
+        if "materials" in sector.lower():
             return {
                 "ticker": ticker,
-                "company_name": info.get("longName", "N/A"),
+                "company_name": long_name,
                 "sector": sector,
-                "subsector": info.get("industry", "N/A"),
-                "summary": info.get("longBusinessSummary", "N/A")
+                "subsector": lookup_valid_material_subsector(sector, subsector, summary),
+                "summary": summary
             }
         else:
             return None
