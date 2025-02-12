@@ -9,6 +9,7 @@ export default function HomePage() {
     useEffect(() => {
         fetchPosts();
         updateVideos();
+        //updateStocks();
     }, [searchQuery]);
 
     const updateVideos = async () => {
@@ -18,6 +19,16 @@ export default function HomePage() {
             })
             .catch(error => {
                 console.error("There was an error updating the videos!", error);
+            });
+    };
+
+    const updateStocks = async () => {
+        axios.put("http://localhost:8000/update_stocks")
+            .then(response => {
+                console.log(response.data.message);
+            })
+            .catch(error => {
+                console.error("There was an error updating the stocks!", error);
             });
     };
 

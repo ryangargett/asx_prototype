@@ -3,6 +3,7 @@ import os
 import mimetypes
 import requests
 import shutil
+import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
@@ -47,10 +48,9 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
-stocks = db["stocks"]
+#stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
-stocks.delete_many({})
 
 users.insert_one({"username": "admin", 
                   "email": "",
@@ -487,22 +487,22 @@ async def get_cached_videos() -> dict:
 @app.put("/update_stocks")
 async def update_stocks() -> dict:
     tickers = get_asx_tickers()
-    tickers = tickers[:100]
     print(f"Discovered {len(tickers)} ASX-listed companies.")
     stocks_collection = db["stocks"]
     
-    for ticker in tickers:
-        stock = get_company_info(ticker)
-        if stock is not None:
-            existing_stock = stocks_collection.find_one({"ticker": ticker})
-            
-            if existing_stock:
-                # Update existing stock metadata
-                stocks_collection.update_one({"ticker": ticker}, {"$set": stock})
-            else:
-                # Insert new stock metadata
+    for ticker_idx, ticker in enumerate(tickers):
+        print(f"Processing {ticker} {ticker_idx} / {len(tickers)}")
+        existing_stock = stocks_collection.find_one({"ticker": ticker})
+        if not existing_stock:
+            time.sleep(0.1) # ensure server doesn't time out
+            stock = get_company_info(ticker)
+            if stock:
                 stocks_collection.insert_one(stock)
-            
+        else:
+            print(f"Found existing metadata for {ticker}, skipping....")
+        
+        stock = get_company_info(ticker)
+        
     return {"message": "Stocks updated successfully"}
 
 if __name__ == "__main__":
