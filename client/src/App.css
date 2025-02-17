@@ -32,7 +32,7 @@ main {
 }
 
 .search-container {
-  @apply w-[60vw] relative ml-auto;
+  @apply w-[40vw] relative ml-auto;
 }
 
 .search-wrapper {
@@ -52,15 +52,19 @@ main {
 }
 
 .search-result-item {
-  @apply flex justify-between items-center px-4 py-2 hover:bg-gray-700 cursor-pointer;
+  @apply flex justify-between items-center px-4 py-3 hover:bg-gray-700 cursor-pointer transition-colors duration-200;
 }
 
 .search-result-ticker {
-  @apply font-bold text-yellow-500;
+  @apply font-bold text-yellow-500 uppercase tracking-wider;
 }
 
 .search-result-company {
-  @apply text-gray-400 text-sm truncate ml-4;
+  @apply text-gray-400 text-sm truncate ml-4 transition-colors duration-200;
+}
+
+.search-result-item:hover .search-result-company {
+  @apply text-gray-300;
 }
 
 .nav-container {
