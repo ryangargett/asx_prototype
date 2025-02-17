@@ -52,6 +52,11 @@ def get_company_info(ticker: str) -> dict:
         sector = info.get("sector", "N/A")
         subsector = info.get("industry", "N/A")
         summary = info.get("longBusinessSummary", "N/A")
+        market_cap = info.get("marketCap", "N/A")
+        share_revenue = info.get("revenuePerShare", "N/A")
+        share_book = info.get("bookValue", "N/A")
+        share_div = info.get("dividendRate", "N/A")
+        volume = info.get("averageVolume", "N/A")
         
         valid_sectors = ["materials", "energy"]
         
@@ -62,7 +67,12 @@ def get_company_info(ticker: str) -> dict:
                 "company_name": long_name,
                 "sector": sector,
                 "subsector": lookup_valid_material_subsector(sector, subsector, summary),
-                "summary": summary
+                "summary": summary,
+                "market_cap": market_cap,
+                "share_revenue": share_revenue,
+                "share_book": share_book,
+                "share_div": share_div,
+                "volume": volume
             }
         else:
             return None
