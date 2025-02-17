@@ -3,6 +3,7 @@ import os
 import mimetypes
 import requests
 import shutil
+import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
@@ -27,6 +28,7 @@ from pymongo import MongoClient
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 from image_search import get_url_from_keyword
+from stock_fetcher import get_asx_tickers, get_company_info
 
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -46,6 +48,7 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
+#stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
 
@@ -89,7 +92,10 @@ class ProfileAddRequest(BaseModel):
     
 class ProfileGetRequest(BaseModel):
     profile_id: str
-    
+
+class TickerRequest(BaseModel):
+    search_query: str    
+
 def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
@@ -449,15 +455,12 @@ async def edit_post(post_id: str = Form(...),
 @app.get("/update_videos")
 async def update_videos() -> dict:
     
-    YOUTUBE_API_KEY = "AIzaSyBfYDQgptHzoFfC3jv2VqyyJeh_dMYQ7Js"
-    PLAYLIST_ID = "PLIlxfUBOi-L3R7ShFFzf3YXT1NOgW_BsQ"
-    
     next_page_token = ""
     videos_collection = db["videos"]
     
     while next_page_token is not None:
         response = requests.get(
-            f"https://www.googleapis.com/youtube/v3/playlistItems?key={YOUTUBE_API_KEY}&playlistId={PLAYLIST_ID}&part=snippet&pageToken={next_page_token}"
+            f"https://www.googleapis.com/youtube/v3/playlistItems?key={config('YOUTUBE_API_KEY')}&playlistId={config('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
         )
         playlist_metadata = response.json()
         video_metadata = playlist_metadata.get("items", [])
@@ -482,6 +485,52 @@ async def get_cached_videos() -> dict:
     videos_collection = db["videos"]    
     cached_videos = list(videos_collection.find({}, {"_id": 0}))
     return {"message": "Videos fetched successfully", "videos": cached_videos}
+
+
+@app.put("/update_stocks")
+async def update_stocks() -> dict:
+    tickers = get_asx_tickers()
+    print(f"Discovered {len(tickers)} ASX-listed companies.")
+    stocks_collection = db["stocks"]
+    
+    for ticker_idx, ticker in enumerate(tickers):
+        print(f"Processing {ticker} {ticker_idx} / {len(tickers)}")
+        existing_stock = stocks_collection.find_one({"ticker": ticker})
+        if not existing_stock:
+            time.sleep(0.1) # ensure server doesn't time out
+            stock = get_company_info(ticker)
+            if stock:
+                stocks_collection.insert_one(stock)
+        else:
+            print(f"Found existing metadata for {ticker}, skipping....")
+        
+        stock = get_company_info(ticker)
+        
+    return {"message": "Stocks updated successfully"}
+
+@app.post("/get_tickers")
+async def get_tickers(request: TickerRequest) -> dict:
+    search_query = request.search_query.lower()
+    print(search_query)
+    stocks_collection = db["stocks"]
+    
+    valid_tickers = []
+    
+    if search_query != "":
+        exact_matches = list(stocks_collection.find({"$or": [{"ticker": search_query}, {"company_name": search_query}]}, {"_id": 0}))
+        print(exact_matches)
+        if exact_matches:
+            valid_tickers = exact_matches
+        else:
+            valid_tickers += list(stocks_collection.find({"ticker": {"$regex": search_query, "$options": "i"}}, {"_id": 0}))
+            valid_tickers += list(stocks_collection.find({"company_name": {"$regex": search_query, "$options": "i"}}, {"_id": 0}))
+            
+    if len(valid_tickers) > 5:
+        valid_tickers = valid_tickers[:5]        
+    
+    print(valid_tickers)
+
+    return {"message": "Stocks fetched successfully", "tickers": valid_tickers}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
