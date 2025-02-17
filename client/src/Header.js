@@ -33,7 +33,7 @@ export default function Header() {
     }, []);
 
     useEffect(() => {
-        if (tickerQuery.length > 2) {
+        if (tickerQuery.length > 1) {
             fetchTickers(tickerQuery);
         } else {
             setTickerResults([]);
@@ -86,7 +86,15 @@ export default function Header() {
                         {tickerResults.length > 0 && (
                             <div className="search-results-dropdown">
                                 {tickerResults.map((result) => (
-                                    <div key={result.ticker} className="search-result-item">
+                                    <div 
+                                        key={result.ticker} 
+                                        className="search-result-item"
+                                        onClick={() => {
+                                            navigate(`/stocks/${result.ticker.toLowerCase()}`);
+                                            setTickerQuery("");
+                                            setTickerResults([]);
+                                        }}
+                                    >
                                         <span className="search-result-ticker">{result.ticker}</span>
                                         <span className="search-result-company">{result.company_name}</span>
                                     </div>
