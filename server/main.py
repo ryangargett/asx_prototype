@@ -1,21 +1,26 @@
-from datetime import datetime, timedelta, timezone
-import os
+import asyncio
 import mimetypes
+import os
 import requests
 import shutil
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 from pydantic import BaseModel
+from pytz import timezone as tz
 
 import uvicorn
 import whisper
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
 from jose import jwt, JWTError
@@ -30,9 +35,6 @@ from summarizer import read_pdf, summarize_content, suggest_title, suggest_image
 from image_search import get_url_from_keyword
 from stock_fetcher import get_asx_tickers, get_company_info
 
-app = FastAPI()
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-#TODO: replace with bcrypt to avoid logging error
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 client = MongoClient(config("MONGODB_KEY"))
@@ -48,6 +50,7 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
+documents = db["documents"]
 #stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
@@ -57,6 +60,92 @@ users.insert_one({"username": "admin",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
 
+def _inside_trading_hours() -> bool:
+    
+    try:
+        
+        print(f"Checking trading hours at {datetime.now()}")
+        
+        target_tz = tz("Australia/Sydney")
+        curr_time = datetime.now().astimezone(target_tz)
+    
+        if curr_time.weekday() < 5:
+            if curr_time.hour >= 10 and curr_time.hour <= 16:
+                return True
+    except Exception as e:
+        print(f"Error encountered when checking trading hours: {e}")
+    
+    return False
+
+def _get_hash(file_path: str) -> str:
+    return sha256(open(file_path, "rb").read()).hexdigest()
+
+async def validate_announcements(daily_log: dict) -> None:
+    
+    documents = db["documents"]
+    
+    for instance_idx, instance in enumerate(daily_log[:5]):
+        print(f"Processing announcement {instance_idx} / {len(daily_log)}") 
+        
+        try:
+            existing_announcement = documents.find_one({"file_id": instance["fileId"]})
+            if not existing_announcement:
+
+                pdf = requests.get(instance["documentURL"])
+                with open(f"./temp.pdf", "wb") as f:
+                    f.write(pdf.content)
+                
+                documents.add_one(
+                    {
+                        "file_id": instance["fileId"],
+                        "title": instance["heading"],
+                        "hash": _get_hash("./temp.pdf"),
+                        "date_released": instance["dateTime"],
+                        "price_sensitive": instance["isSensitive"],
+                        "linked_ticker": instance["code"],
+                        "news_types": instance["newsTypes"],
+                    }
+                )
+                
+                os.remove("./temp.pdf") # clean up temp file
+        except Exception as e:
+            print(f"Error validating announcement: {e}")
+
+async def renew_announcements() -> None:
+    
+    print(f"Reviewing new announcements at {datetime.now()}")
+    
+    username = config("ASX_API_USERNAME")
+    password = config("ASX_API_PASSWORD")
+    
+    print(f"Username: {username}")
+    print(f"Password: {password}")
+    
+    if _inside_trading_hours():
+        
+        print(f"Inside trading hours, polling ASX announcements")
+        
+        try:
+            daily_announcements = requests.get(
+                "https://quoteapi.com/files/rtw/asx_news_today.json", 
+                auth=(username, password)
+            )
+            print(f"Polled at {datetime.now()}")
+            await validate_announcements(daily_announcements.json())
+        except Exception as e:
+            print(f"Unexpected error encountered when polling ASX announcements: {e}")
+    else:
+        print(f"Outside trading hours, skipping ASX announcements")
+    
+    await asyncio.sleep(120)
+    asyncio.create_task(renew_announcements())
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Starting background task")
+    polling_task = asyncio.create_task(renew_announcements())
+    yield
+    polling_task.cancel()
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -64,6 +153,10 @@ pwd_policy = PasswordPolicy.from_names(
     numbers=1,
     special=1
 )
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+#TODO: replace with bcrypt to avoid logging error
 
 app.add_middleware(
     CORSMiddleware,
@@ -109,8 +202,8 @@ def verify_token(token: str):
         exp = payload.get("exp")
         current_time = datetime.now(timezone.utc).timestamp()
         
-        print(f"Token expiration time: {exp}")
-        print(f"Current time: {current_time}")
+        #print(f"Token expiration time: {exp}")
+        #print(f"Current time: {current_time}")
         if username is None:
             raise HTTPException(status_code=403, detail="Invalid token")
         return payload
@@ -229,21 +322,15 @@ async def register(request: RegisterRequest) -> dict:
 async def login(response: Response, request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
     user = users.find_one({"username": request.username})
     
-    print(user)
-    
     if not user:
         # try email address as well
         user = users.find_one({"email": request.username})
         
         if not user:
             raise HTTPException(status_code=400, detail="Invalid username or email")
-     
-    print(user)
         
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
-    
-    print(config("TOKEN_EXPIRY"))
     
     auth_token = generate_token(user["username"], user["elevation"], int(config("TOKEN_EXPIRY")))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
