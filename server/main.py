@@ -51,6 +51,7 @@ users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
 documents = db["documents"]
+documents.delete_many({})
 #stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
@@ -78,39 +79,73 @@ def _inside_trading_hours() -> bool:
     return False
 
 def _get_hash(file_path: str) -> str:
-    return sha256(open(file_path, "rb").read()).hexdigest()
-
+    try:
+        with open(file_path, "rb") as f:
+            hash = sha256(f.read()).hexdigest()
+        return hash
+    except Exception as e:
+        print(f"Error hashing file: {e}")
+        return ""
+    
 async def validate_announcements(daily_log: dict) -> None:
     
-    documents = db["documents"]
-    
-    for instance_idx, instance in enumerate(daily_log[:5]):
-        print(f"Processing announcement {instance_idx} / {len(daily_log)}") 
+    for instance_idx, instance in enumerate(daily_log[:30]):
+        print(f"Processing announcement {instance_idx + 1} / {len(daily_log)}") 
         
-        try:
-            existing_announcement = documents.find_one({"file_id": instance["fileId"]})
-            if not existing_announcement:
+        file_id = instance.get("fileId", "")
+        if file_id != "":
+            f_name = f"./{file_id}.pdf"
+        
+            try:
+                existing_announcement = documents.find_one({"file_id": instance["fileId"]})
+                if not existing_announcement:
 
-                pdf = requests.get(instance["documentURL"])
-                with open(f"./temp.pdf", "wb") as f:
-                    f.write(pdf.content)
+                    if instance.get("documentURL", "N/A") != "N/A":
+                        print(f"Downloading pdf from url: {instance['documentURL']}")
+                        
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                            'Accept': 'application/pdf,application/x-pdf,*/*',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive'
+                        }
+                        
+                        response = requests.get(instance["documentURL"], 
+                                                headers = headers,
+                                                auth = (config("ASX_API_USERNAME"), config("ASX_API_PASSWORD")))
+                        
+                        print("Response status code: ", response.status_code)
+                        
+                        with open(f_name, "wb") as f:
+                            f.write(response.content)
+                            
+                        print(f"Succesfully downloaded pdf to {f_name}")
+                        
+                        print("Extracting unique hash from file")
+                        hash = _get_hash(f_name)
+                        print(f"Hash: {hash} for file: {f_name}")
+                        
+                        documents.insert_one(
+                            {
+                                "file_id": instance["fileId"],
+                                "title": instance["heading"],
+                                "hash": hash,
+                                "date_released": instance["dateTime"],
+                                "price_sensitive": instance["isSensitive"],
+                                "linked_ticker": instance["code"],
+                                "news_types": instance["newsTypes"],
+                            }
+                        )
+                        
+            except Exception as e:
+                print(f"Error validating announcement: {e}")
+             
+            # ensure that temp file is deleted after processing even if exception is thrown 
                 
-                documents.add_one(
-                    {
-                        "file_id": instance["fileId"],
-                        "title": instance["heading"],
-                        "hash": _get_hash("./temp.pdf"),
-                        "date_released": instance["dateTime"],
-                        "price_sensitive": instance["isSensitive"],
-                        "linked_ticker": instance["code"],
-                        "news_types": instance["newsTypes"],
-                    }
-                )
+            if os.path.exists(f_name):
+                os.remove(f_name)
                 
-                os.remove("./temp.pdf") # clean up temp file
-        except Exception as e:
-            print(f"Error validating announcement: {e}")
-
+                   
 async def renew_announcements() -> None:
     
     print(f"Reviewing new announcements at {datetime.now()}")
