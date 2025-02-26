@@ -21,6 +21,7 @@ import uvicorn
 import whisper
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import boto3 as b3
 from email_validator import validate_email, EmailNotValidError
 from decouple import config
 from jose import jwt, JWTError
@@ -56,15 +57,15 @@ documents.delete_many({})
 users.delete_many({})
 posts.delete_many({})
 
+s3_client = b3.client("s3", region_name="ap-southeast-2")
+
 users.insert_one({"username": "admin", 
                   "email": "",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
 
 def _inside_trading_hours() -> bool:
-    
     try:
-        
         print(f"Checking trading hours at {datetime.now()}")
         
         target_tz = tz("Australia/Sydney")
@@ -76,7 +77,7 @@ def _inside_trading_hours() -> bool:
     except Exception as e:
         print(f"Error encountered when checking trading hours: {e}")
     
-    return False
+    return True
 
 def _get_hash(file_path: str) -> str:
     try:
@@ -87,9 +88,34 @@ def _get_hash(file_path: str) -> str:
         print(f"Error hashing file: {e}")
         return ""
     
+def create_from_feed(file_path: str, hash: str) -> None:
+    try:
+        post_id = str(uuid.uuid4())
+        
+        parsed_content = read_pdf(file_path)
+        summarized_content = markdown(summarize_content(parsed_content))
+        suggested_title = suggest_title(parsed_content)
+        suggested_image_kwords = suggest_image_kwords(parsed_content)
+        cover_image_url = get_url_from_keyword(suggested_image_kwords)
+        
+        created_at = datetime.now(timezone.utc)
+        
+        posts.insert_one({
+            "post_id": post_id,
+            "title": suggested_title,
+            "content": summarized_content,
+            "cover_image": cover_image_url if cover_image_url is not None else "GENERIC/PLACEHOLDER.svg",
+            "created_at": created_at,
+            "modified_at": created_at,
+            "pdf_id": hash
+        })
+
+    except Exception as e:
+        print(f"Error creating post from feed: {e}")
+    
 async def validate_announcements(daily_log: dict) -> None:
     
-    for instance_idx, instance in enumerate(daily_log[:30]):
+    for instance_idx, instance in enumerate(daily_log[:22]):
         print(f"Processing announcement {instance_idx + 1} / {len(daily_log)}") 
         
         file_id = instance.get("fileId", "")
@@ -125,17 +151,32 @@ async def validate_announcements(daily_log: dict) -> None:
                         hash = _get_hash(f_name)
                         print(f"Hash: {hash} for file: {f_name}")
                         
-                        documents.insert_one(
-                            {
-                                "file_id": instance["fileId"],
-                                "title": instance["heading"],
-                                "hash": hash,
-                                "date_released": instance["dateTime"],
-                                "price_sensitive": instance["isSensitive"],
-                                "linked_ticker": instance["code"],
-                                "news_types": instance["newsTypes"],
-                            }
-                        )
+                        # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
+                        
+                        if not documents.find_one({"hash": hash}):
+                            print("Inserting new document into collection")
+                            
+                            try:
+                                s3_client.upload_file(f_name, "rtwasxreports", f"{hash}.pdf")
+                            except Exception as e:
+                                print(f"Error uploading file to s3 bucket: {e}")
+                
+                            create_from_feed(f_name, hash)
+                        
+                            documents.insert_one(
+                                {
+                                    "file_id": instance["fileId"],
+                                    "title": instance["heading"],
+                                    "hash": hash,
+                                    "date_released": instance["dateTime"],
+                                    "price_sensitive": instance["isSensitive"],
+                                    "linked_ticker": instance["code"],
+                                    "news_types": instance["newsTypes"],
+                                }
+                            )
+                 
+                else:
+                    print(f"Document already exists in collection, skipping...")
                         
             except Exception as e:
                 print(f"Error validating announcement: {e}")
@@ -528,6 +569,20 @@ async def get_post(id: str) -> dict:
     post = posts.find_one({"post_id": id}, {"_id": 0})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
+    document = documents.find_one({"hash": post["pdf_id"]}, {"_id": 0})
+    if document:
+        temp_url = s3_client.generate_presigned_url("get_object", 
+                                                    Params={
+                                                        "Bucket": "rtwasxreports", 
+                                                        "Key": f"{document['hash']}.pdf",
+                                                        "ResponseContentDisposition": "inline",
+                                                        "ResponseContentType": "application/pdf"
+                                                    },
+                                                    ExpiresIn=3600)
+        print(temp_url)
+        post["pdf_url"] = temp_url
+    
     return {"message": "Post loaded successfully", "post": post}
 
 @app.put("/edit")

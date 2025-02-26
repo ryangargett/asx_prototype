@@ -6,6 +6,7 @@ import axios from "axios"
 export default function PostPage() {
 
     const [post, setPost] = useState(null)
+    const [pdfURL, setPDFURL] = useState(null)
     const [hasPDF, setHasPDF] = useState(false)
     const params = useParams()
     const { elevation } = useUser();
@@ -18,23 +19,16 @@ export default function PostPage() {
                 console.log(response.data.message)
                 console.log(response.data.post)
                 setPost(response.data.post)
-                checkPDFExists(response.data.post.post_id)
+                if (response.data.post.pdf_url != null) {
+                    setHasPDF(true)
+                    setPDFURL(response.data.post.pdf_url)
+                    console.log("PDF URL:", response.data.post.pdf_url)
+                }
             })
             .catch(error => {
                 console.error("There was an error fetching the post!", error)
             })
     }, [params.id])
-
-    const checkPDFExists = async (post_id) => {
-        try {
-            const response = await axios.head(`http://localhost:8000/uploads/${post_id}/${post_id}.pdf`)
-            if (response.status === 200) {
-                setHasPDF(true)
-            }
-        } catch (error) {
-            setHasPDF(false)
-        }
-    }
 
     if (!post) {
         return <div>Loading...</div>;
@@ -43,7 +37,7 @@ export default function PostPage() {
     const isDefaultImg = post.cover_image.includes("GENERIC/PLACEHOLDER.svg")
     const imgURL = isDefaultImg 
         ? "http://localhost:8000/uploads/GENERIC/PLACEHOLDER.svg"
-        : `http://localhost:8000/uploads/${post.post_id}/${post.cover_image}?t=${new Date().getTime()}`;
+        : post.cover_image;
 
     return (
         <div className="post-page">
@@ -63,7 +57,7 @@ export default function PostPage() {
                     <h1>Raw file:</h1>
                 </div>
                 <div className="pdf-content">
-                    <iframe src={`http://localhost:8000/uploads/${post.post_id}/${post.post_id}.pdf`} width="100%" height="600px"></iframe>
+                    <iframe src={pdfURL} width="100%" height="600px"></iframe>
                 </div>
             </>
         )}

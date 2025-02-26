@@ -11,7 +11,7 @@ export default function Post({ post_id, title, cover_image, modified_at }) {
     const isDefaultImg = cover_image.includes("GENERIC/PLACEHOLDER.svg");
     const imgURL = isDefaultImg 
         ? "http://localhost:8000/uploads/GENERIC/PLACEHOLDER.svg"
-        : `http://localhost:8000/uploads/${post_id}/${cover_image}?t=${new Date().getTime()}`;
+        : cover_image;
     const modifiedAt = new Date(modified_at);
     const localModifiedAt = new Date(modifiedAt.getTime() - (modifiedAt.getTimezoneOffset() * 60000));
 
