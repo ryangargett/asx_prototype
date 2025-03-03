@@ -1,23 +1,29 @@
-from datetime import datetime, timedelta, timezone
-import os
+import asyncio
 import mimetypes
+import os
 import requests
 import shutil
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 from pydantic import BaseModel
+from pytz import timezone as tz
 
 import uvicorn
 import whisper
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import boto3 as b3
 from email_validator import validate_email, EmailNotValidError
-from decouple import config
+#from decouple import config
 from jose import jwt, JWTError
 from markdown import markdown
 from password_strength import PasswordPolicy
@@ -30,12 +36,9 @@ from summarizer import read_pdf, summarize_content, suggest_title, suggest_image
 from image_search import get_url_from_keyword
 from stock_fetcher import get_asx_tickers, get_company_info
 
-app = FastAPI()
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-#TODO: replace with bcrypt to avoid logging error
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-client = MongoClient(config("MONGODB_KEY"))
+client = MongoClient(os.getenv("MONGODB_KEY"))
 
 # Check if cluster is connected
 try:
@@ -48,15 +51,179 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
+documents = db["documents"]
+documents.delete_many({})
 #stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
+
+s3_client = b3.client("s3", region_name="ap-southeast-2")
 
 users.insert_one({"username": "admin", 
                   "email": "",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
 
+def _inside_trading_hours() -> bool:
+    try:
+        print(f"Checking trading hours at {datetime.now()}")
+        
+        target_tz = tz("Australia/Sydney")
+        curr_time = datetime.now().astimezone(target_tz)
+    
+        if curr_time.weekday() < 5:
+            if curr_time.hour >= 10 and curr_time.hour <= 16:
+                return True
+    except Exception as e:
+        print(f"Error encountered when checking trading hours: {e}")
+    
+    return True
+
+def _get_hash(file_path: str) -> str:
+    try:
+        with open(file_path, "rb") as f:
+            hash = sha256(f.read()).hexdigest()
+        return hash
+    except Exception as e:
+        print(f"Error hashing file: {e}")
+        return ""
+    
+def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
+    try:
+        post_id = str(uuid.uuid4())
+        
+        parsed_content = read_pdf(file_path)
+        summarized_content = markdown(summarize_content(parsed_content))
+        suggested_title = suggest_title(parsed_content)
+        suggested_image_kwords = suggest_image_kwords(parsed_content)
+        cover_image_url = get_url_from_keyword(suggested_image_kwords)
+        
+        created_at = datetime.now(timezone.utc)
+        
+        posts.insert_one({
+            "post_id": post_id,
+            "title": suggested_title,
+            "content": summarized_content,
+            "cover_image": cover_image_url if cover_image_url is not None else "GENERIC/PLACEHOLDER.svg",
+            "created_at": created_at,
+            "modified_at": created_at,
+            "pdf_id": hash,
+            #"sector": _get_sector_from_ticker(ticker)
+        })
+
+    except Exception as e:
+        print(f"Error creating post from feed: {e}")
+    
+async def validate_announcements(daily_log: dict) -> None:
+    
+    for instance_idx, instance in enumerate(daily_log):
+        print(f"Processing announcement {instance_idx + 1} / {len(daily_log)}") 
+        
+        file_id = instance.get("fileId", "")
+        if file_id != "":
+            f_name = f"./{file_id}.pdf"
+        
+            try:
+                existing_announcement = documents.find_one({"file_id": instance["fileId"]})
+                if not existing_announcement:
+
+                    if instance.get("documentURL", "N/A") != "N/A":
+                        print(f"Downloading pdf from url: {instance['documentURL']}")
+                        
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                            'Accept': 'application/pdf,application/x-pdf,*/*',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive'
+                        }
+                        
+                        response = requests.get(instance["documentURL"], 
+                                                headers = headers,
+                                                auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
+                        
+                        print("Response status code: ", response.status_code)
+                        
+                        with open(f_name, "wb") as f:
+                            f.write(response.content)
+                            
+                        print(f"Succesfully downloaded pdf to {f_name}")
+                        
+                        print("Extracting unique hash from file")
+                        hash = _get_hash(f_name)
+                        print(f"Hash: {hash} for file: {f_name}")
+                        
+                        # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
+                        
+                        if not documents.find_one({"hash": hash}):
+                            print("Inserting new document into collection")
+                            
+                            try:
+                                s3_client.upload_file(f_name, "rtwasxreports", f"{hash}.pdf")
+                            except Exception as e:
+                                print(f"Error uploading file to s3 bucket: {e}")
+                
+                            #create_from_feed(f_name, hash, instance["code"])
+                        
+                            documents.insert_one(
+                                {
+                                    "file_id": instance["fileId"],
+                                    "title": instance["heading"],
+                                    "hash": hash,
+                                    "date_released": instance["dateTime"],
+                                    "price_sensitive": instance["isSensitive"],
+                                    "linked_ticker": instance["code"],
+                                    "news_types": instance["newsTypes"],
+                                    "prev_ticker": instance["prevCode"] if instance.get("releaseCode", "") != "" else "N/A",
+                                }
+                            )
+                 
+                else:
+                    print(f"Document already exists in collection, skipping...")
+                        
+            except Exception as e:
+                print(f"Error validating announcement: {e}")
+             
+            # ensure that temp file is deleted after processing even if exception is thrown 
+                
+            if os.path.exists(f_name):
+                os.remove(f_name)
+                
+                   
+async def renew_announcements() -> None:
+    
+    print(f"Reviewing new announcements at {datetime.now()}")
+    
+    username = os.getenv("ASX_API_USERNAME")
+    password = os.getenv("ASX_API_PASSWORD")
+    
+    print(f"Username: {username}")
+    print(f"Password: {password}")
+    
+    if _inside_trading_hours():
+        
+        print(f"Inside trading hours, polling ASX announcements")
+        
+        try:
+            daily_announcements = requests.get(
+                "https://quoteapi.com/files/rtw/asx_news_today.json", 
+                auth=(username, password)
+            )
+            print(f"Polled at {datetime.now()}")
+            await validate_announcements(daily_announcements.json())
+        except Exception as e:
+            print(f"Unexpected error encountered when polling ASX announcements: {e}")
+    else:
+        print(f"Outside trading hours, skipping ASX announcements")
+    
+    await asyncio.sleep(120)
+    asyncio.create_task(renew_announcements())
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Starting background task")
+    polling_task = asyncio.create_task(renew_announcements())
+    yield
+    polling_task.cancel()
 
 pwd_policy = PasswordPolicy.from_names(
     length=8,
@@ -64,6 +231,10 @@ pwd_policy = PasswordPolicy.from_names(
     numbers=1,
     special=1
 )
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+#TODO: replace with bcrypt to avoid logging error
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,17 +271,17 @@ def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
               "exp": datetime.now(timezone.utc) + timedelta(minutes=expiry)}
-    return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
+    return jwt.encode(encode, os.getenv("SECRET_KEY"), algorithm = os.getenv("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
     try:
-        payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
+        payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("AUTH_ALGORITHM")])
         username = payload.get("user")
         exp = payload.get("exp")
         current_time = datetime.now(timezone.utc).timestamp()
         
-        print(f"Token expiration time: {exp}")
-        print(f"Current time: {current_time}")
+        #print(f"Token expiration time: {exp}")
+        #print(f"Current time: {current_time}")
         if username is None:
             raise HTTPException(status_code=403, detail="Invalid token")
         return payload
@@ -229,23 +400,17 @@ async def register(request: RegisterRequest) -> dict:
 async def login(response: Response, request: OAuth2PasswordRequestForm = Depends()) -> AuthToken:
     user = users.find_one({"username": request.username})
     
-    print(user)
-    
     if not user:
         # try email address as well
         user = users.find_one({"email": request.username})
         
         if not user:
             raise HTTPException(status_code=400, detail="Invalid username or email")
-     
-    print(user)
         
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    print(config("TOKEN_EXPIRY"))
-    
-    auth_token = generate_token(user["username"], user["elevation"], int(config("TOKEN_EXPIRY")))
+    auth_token = generate_token(user["username"], user["elevation"], int(os.getenv("TOKEN_EXPIRY")))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
@@ -273,7 +438,7 @@ async def create_post(title: str = Form(...),
                       cover_image_url: str = Form(None),
                       post_id: str = Form(None)) -> dict:
     
-    upload_dir = config("UPLOAD_DIR")
+    upload_dir = os.getenv("UPLOAD_DIR")
     
     print(post_id)
     
@@ -287,7 +452,7 @@ async def create_post(title: str = Form(...),
     cover_id = f"{post_id}_cover.webp"
     upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
     
-    print(config("DEF_IMAGE"))
+    print(os.getenv("DEF_IMAGE"))
     print(cover_image_url)
     
     if cover_image: # if a custom image is provided, upload to server for conversion
@@ -306,7 +471,7 @@ async def create_post(title: str = Form(...),
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
         else:
-            cover_id = config("DEF_IMAGE")
+            cover_id = os.getenv("DEF_IMAGE")
     
     created_at = datetime.now(timezone.utc)
     
@@ -347,7 +512,7 @@ async def get_profile(request: ProfileGetRequest) -> dict:
 async def autofill_data(file: UploadFile = File(...),
                         user_prompt: str = Form(...)) -> dict:
     
-    upload_dir = config("UPLOAD_DIR")
+    upload_dir = os.getenv("UPLOAD_DIR")
     
     post_id = str(uuid.uuid4())
     post_dir = os.path.join(upload_dir, post_id)
@@ -406,6 +571,20 @@ async def get_post(id: str) -> dict:
     post = posts.find_one({"post_id": id}, {"_id": 0})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
+    document = documents.find_one({"hash": post["pdf_id"]}, {"_id": 0})
+    if document:
+        temp_url = s3_client.generate_presigned_url("get_object", 
+                                                    Params={
+                                                        "Bucket": "rtwasxreports", 
+                                                        "Key": f"{document['hash']}.pdf",
+                                                        "ResponseContentDisposition": "inline",
+                                                        "ResponseContentType": "application/pdf"
+                                                    },
+                                                    ExpiresIn=3600)
+        print(temp_url)
+        post["pdf_url"] = temp_url
+    
     return {"message": "Post loaded successfully", "post": post}
 
 @app.put("/edit")
@@ -460,7 +639,7 @@ async def update_videos() -> dict:
     
     while next_page_token is not None:
         response = requests.get(
-            f"https://www.googleapis.com/youtube/v3/playlistItems?key={config('YOUTUBE_API_KEY')}&playlistId={config('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
+            f"https://www.googleapis.com/youtube/v3/playlistItems?key={os.getenv('YOUTUBE_API_KEY')}&playlistId={os.getenv('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
         )
         playlist_metadata = response.json()
         video_metadata = playlist_metadata.get("items", [])
