@@ -88,7 +88,7 @@ def _get_hash(file_path: str) -> str:
         print(f"Error hashing file: {e}")
         return ""
     
-def create_from_feed(file_path: str, hash: str) -> None:
+def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
     try:
         post_id = str(uuid.uuid4())
         
@@ -107,7 +107,8 @@ def create_from_feed(file_path: str, hash: str) -> None:
             "cover_image": cover_image_url if cover_image_url is not None else "GENERIC/PLACEHOLDER.svg",
             "created_at": created_at,
             "modified_at": created_at,
-            "pdf_id": hash
+            "pdf_id": hash,
+            #"sector": _get_sector_from_ticker(ticker)
         })
 
     except Exception as e:
@@ -115,7 +116,7 @@ def create_from_feed(file_path: str, hash: str) -> None:
     
 async def validate_announcements(daily_log: dict) -> None:
     
-    for instance_idx, instance in enumerate(daily_log[:22]):
+    for instance_idx, instance in enumerate(daily_log):
         print(f"Processing announcement {instance_idx + 1} / {len(daily_log)}") 
         
         file_id = instance.get("fileId", "")
@@ -161,7 +162,7 @@ async def validate_announcements(daily_log: dict) -> None:
                             except Exception as e:
                                 print(f"Error uploading file to s3 bucket: {e}")
                 
-                            create_from_feed(f_name, hash)
+                            #create_from_feed(f_name, hash, instance["code"])
                         
                             documents.insert_one(
                                 {
@@ -172,6 +173,7 @@ async def validate_announcements(daily_log: dict) -> None:
                                     "price_sensitive": instance["isSensitive"],
                                     "linked_ticker": instance["code"],
                                     "news_types": instance["newsTypes"],
+                                    "prev_ticker": instance["prevCode"] if instance.get("releaseCode", "") != "" else "N/A",
                                 }
                             )
                  
