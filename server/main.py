@@ -23,7 +23,7 @@ import whisper
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import boto3 as b3
 from email_validator import validate_email, EmailNotValidError
-from decouple import config
+#from decouple import config
 from jose import jwt, JWTError
 from markdown import markdown
 from password_strength import PasswordPolicy
@@ -38,7 +38,7 @@ from stock_fetcher import get_asx_tickers, get_company_info
 
 encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-client = MongoClient(config("MONGODB_KEY"))
+client = MongoClient(os.getenv("MONGODB_KEY"))
 
 # Check if cluster is connected
 try:
@@ -139,7 +139,7 @@ async def validate_announcements(daily_log: dict) -> None:
                         
                         response = requests.get(instance["documentURL"], 
                                                 headers = headers,
-                                                auth = (config("ASX_API_USERNAME"), config("ASX_API_PASSWORD")))
+                                                auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
                         
                         print("Response status code: ", response.status_code)
                         
@@ -193,8 +193,8 @@ async def renew_announcements() -> None:
     
     print(f"Reviewing new announcements at {datetime.now()}")
     
-    username = config("ASX_API_USERNAME")
-    password = config("ASX_API_PASSWORD")
+    username = os.getenv("ASX_API_USERNAME")
+    password = os.getenv("ASX_API_PASSWORD")
     
     print(f"Username: {username}")
     print(f"Password: {password}")
@@ -271,11 +271,11 @@ def generate_token(username: str, elevation: str, expiry: int) -> str:
     encode = {"user": username,
               "elevation": elevation, 
               "exp": datetime.now(timezone.utc) + timedelta(minutes=expiry)}
-    return jwt.encode(encode, config("SECRET_KEY"), algorithm=config("AUTH_ALGORITHM"))
+    return jwt.encode(encode, os.getenv("SECRET_KEY"), algorithm = os.getenv("AUTH_ALGORITHM"))
 
 def verify_token(token: str):
     try:
-        payload = jwt.decode(token, config("SECRET_KEY"), algorithms=[config("AUTH_ALGORITHM")])
+        payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("AUTH_ALGORITHM")])
         username = payload.get("user")
         exp = payload.get("exp")
         current_time = datetime.now(timezone.utc).timestamp()
@@ -410,7 +410,7 @@ async def login(response: Response, request: OAuth2PasswordRequestForm = Depends
     if not verify_password(request.password, user["password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    auth_token = generate_token(user["username"], user["elevation"], int(config("TOKEN_EXPIRY")))
+    auth_token = generate_token(user["username"], user["elevation"], int(os.getenv("TOKEN_EXPIRY")))
     response.set_cookie(key = "auth_token", value = auth_token, httponly = True, secure = True, samesite = "Strict")
     return {"message": "Succesfully logged in!", "access_token": auth_token, "token_type": "bearer"}
 
@@ -438,7 +438,7 @@ async def create_post(title: str = Form(...),
                       cover_image_url: str = Form(None),
                       post_id: str = Form(None)) -> dict:
     
-    upload_dir = config("UPLOAD_DIR")
+    upload_dir = os.getenv("UPLOAD_DIR")
     
     print(post_id)
     
@@ -452,7 +452,7 @@ async def create_post(title: str = Form(...),
     cover_id = f"{post_id}_cover.webp"
     upload_path = os.path.join(os.path.join(upload_dir, post_id), cover_id)
     
-    print(config("DEF_IMAGE"))
+    print(os.getenv("DEF_IMAGE"))
     print(cover_image_url)
     
     if cover_image: # if a custom image is provided, upload to server for conversion
@@ -471,7 +471,7 @@ async def create_post(title: str = Form(...),
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Error converting image: {e}")
         else:
-            cover_id = config("DEF_IMAGE")
+            cover_id = os.getenv("DEF_IMAGE")
     
     created_at = datetime.now(timezone.utc)
     
@@ -512,7 +512,7 @@ async def get_profile(request: ProfileGetRequest) -> dict:
 async def autofill_data(file: UploadFile = File(...),
                         user_prompt: str = Form(...)) -> dict:
     
-    upload_dir = config("UPLOAD_DIR")
+    upload_dir = os.getenv("UPLOAD_DIR")
     
     post_id = str(uuid.uuid4())
     post_dir = os.path.join(upload_dir, post_id)
@@ -639,7 +639,7 @@ async def update_videos() -> dict:
     
     while next_page_token is not None:
         response = requests.get(
-            f"https://www.googleapis.com/youtube/v3/playlistItems?key={config('YOUTUBE_API_KEY')}&playlistId={config('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
+            f"https://www.googleapis.com/youtube/v3/playlistItems?key={os.getenv('YOUTUBE_API_KEY')}&playlistId={os.getenv('PLAYLIST_ID')}&part=snippet&pageToken={next_page_token}"
         )
         playlist_metadata = response.json()
         video_metadata = playlist_metadata.get("items", [])
