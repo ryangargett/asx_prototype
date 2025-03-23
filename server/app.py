@@ -1,6 +1,7 @@
 import asyncio
 import mimetypes
 import os
+import json
 import requests
 import shutil
 import time
@@ -80,7 +81,7 @@ def _inside_trading_hours() -> bool:
     
     return True
 
-def _get_hash(file_path: str) -> str:
+def get_hash(file_path: str) -> str:
     try:
         with open(file_path, "rb") as f:
             hash = sha256(f.read()).hexdigest()
@@ -89,12 +90,13 @@ def _get_hash(file_path: str) -> str:
         print(f"Error hashing file: {e}")
         return ""
     
+'''
 def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
     try:
         post_id = str(uuid.uuid4())
         
         parsed_content = read_pdf(file_path)
-        summarized_content = markdown(summarize_content(parsed_content))
+        summarized_content = summarize_content(parsed_content)
         suggested_title = suggest_title(parsed_content)
         suggested_image_kwords = suggest_image_kwords(parsed_content)
         cover_image_url = get_url_from_keyword(suggested_image_kwords)
@@ -114,6 +116,77 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
 
     except Exception as e:
         print(f"Error creating post from feed: {e}")
+'''
+
+def generate_content(file_path: str, ticker: str) -> dict:
+    try:
+        print("Reading document...")
+        parsed_content = read_pdf(file_path)
+        print("Summarizing content...")
+        document_content = summarize_content(parsed_content, ticker)
+        print("Generated content: ", document_content)
+        print("Generating blurb...")
+        
+        prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be appropriate for a finance blog targeted towards beginner traders.\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        summary = summarize_content(parsed_content, ticker, prompt = prompt)
+        
+        print("Generated summary: ", summary)
+        print("Suggesting title(s)...")
+        short_title, long_title = suggest_title(parsed_content, ticker)
+        print(f"Generated short title: {short_title}, Long title: {long_title}")
+        print("Suggesting image keywords...")
+        suggested_image_kwords = suggest_image_kwords(ticker, short_title)
+        print("Fetching image URL...")
+        cover_image_url = get_url_from_keyword(suggested_image_kwords)
+        print(f"Generated image URL: {cover_image_url}")
+    except Exception as e:
+        print(f"Error generating content: {e}")
+        
+    content =  {
+        "short_title": short_title,
+        "long_title": long_title,
+        "content": document_content,
+        "summary": summary,
+        "image_url": cover_image_url,
+    }
+    
+    with open("content.json", "w") as f:
+        json.dump(content, f)
+
+def push_to_site(file_path: str, hash: str, ticker: str) -> None:
+    
+    access_token = os.getenv("WEBFLOW_API_KEY")
+    collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
+    
+    generated = generate_content(file_path, ticker)
+    print("Attempting webflow upload...")
+    
+    try:
+        response = requests.post(
+        f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+        headers = {
+            "Authorization": "Bearer " + access_token,
+            "Content-Type": "application/json"
+        },
+        json = {
+            "fieldData": {
+                "name": generated["short_title"],
+                "title": generated["long_title"],
+                "short-title": generated["short_title"],
+                "content": generated["content"],
+                "hash-value": hash,
+                "summary": generated["summary"],
+                "image-url": generated["image_url"],
+                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+                "ticker": ticker                
+            }
+        }
+    )
+    
+        print(response.json())
+        
+    except Exception as e:
+        print(f"Error uploading to webflow: {e}")
     
 def validate_announcements(daily_log: dict) -> None:
     
@@ -170,7 +243,9 @@ def validate_announcements(daily_log: dict) -> None:
                                     except Exception as e:
                                         print(f"Error uploading file to s3 bucket: {e}")
                         
-                                    #create_from_feed(f_name, hash, instance["code"])
+                                    #TODO: Improve filtering mechanism to avoid unnecessary uploads
+                                    if instance.get("isSensitive", "N") == "Y":
+                                        push_to_site(f_name, hash, instance["code"])
                                 
                                     documents.insert_one(
                                         {
@@ -184,6 +259,7 @@ def validate_announcements(daily_log: dict) -> None:
                                             "prev_ticker": instance["releaseCode"] if instance.get("releaseCode", "") != "" else "N/A",
                                         }
                                     )
+                                    
                         
                         else:
                             print(f"Document already exists in collection, skipping...")
