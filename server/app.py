@@ -227,7 +227,7 @@ def validate_announcements(daily_log: dict) -> None:
                                 #print(f"Succesfully downloaded pdf to {f_name}")
                                 
                                 #print("Extracting unique hash from file")
-                                hash = _get_hash(f_name)
+                                hash = get_hash(f_name)
                                 #print(f"Hash: {hash} for file: {f_name}")
                                 
                                 # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
