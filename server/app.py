@@ -163,7 +163,10 @@ def validate_announcements(daily_log: dict) -> None:
                                     #print("Inserting new document into collection")
                                     
                                     try:
-                                        s3_client.upload_file(f_name, "rtwasxreports", f"{hash}.pdf")
+                                        s3_client.upload_file(f_name, 
+                                                              "rtwasxreports", 
+                                                              f"{hash}.pdf",
+                                                              ExtraArgs={"ContentType": "application/pdf"})
                                     except Exception as e:
                                         print(f"Error uploading file to s3 bucket: {e}")
                         
