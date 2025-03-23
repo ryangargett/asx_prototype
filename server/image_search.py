@@ -1,7 +1,10 @@
+from random import randint
+
 from decouple import config
 from serpapi import GoogleSearch
 
 api_key = config("SERP_KEY")
+MAX_IMAGES = 10
 
 def get_url_from_keyword(keywords):
     valid_link = None
@@ -18,8 +21,8 @@ def get_url_from_keyword(keywords):
         search = GoogleSearch(params)
         results = search.get_dict()
         
-        if len(results["images_results"]) > 0:
-            valid_link = results["images_results"][0]["original"]
+        valid_idx = randint(0, min(len(results["images_results"]) - 1, MAX_IMAGES))
+        valid_link = results["images_results"][valid_idx]["original"]
         
     return valid_link
 
