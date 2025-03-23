@@ -30,13 +30,14 @@ from password_strength import PasswordPolicy
 from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
+from tqdm import tqdm
 
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 from image_search import get_url_from_keyword
 from stock_fetcher import get_asx_tickers, get_company_info
 
-encrypter = CryptContext(schemes=["bcrypt"], deprecated="auto")
+encrypter = CryptContext(schemes=["argon2"], deprecated="auto")
 
 client = MongoClient(os.getenv("MONGODB_KEY"))
 
@@ -58,12 +59,12 @@ users.delete_many({})
 posts.delete_many({})
 
 s3_client = b3.client("s3", region_name="ap-southeast-2")
-
+'''
 users.insert_one({"username": "admin", 
                   "email": "",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
-
+'''
 def _inside_trading_hours() -> bool:
     try:
         print(f"Checking trading hours at {datetime.now()}")
@@ -114,80 +115,85 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
     except Exception as e:
         print(f"Error creating post from feed: {e}")
     
-async def validate_announcements(daily_log: dict) -> None:
+def validate_announcements(daily_log: dict) -> None:
     
-    for instance_idx, instance in enumerate(daily_log):
-        print(f"Processing announcement {instance_idx + 1} / {len(daily_log)}") 
+    with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
+        for instance_idx, instance in enumerate(daily_log):
+            pbar.set_postfix_str(f"Processing announcement {instance_idx + 1} / {len(daily_log)}")
+            pbar.update(1)
         
-        file_id = instance.get("fileId", "")
-        if file_id != "":
-            f_name = f"./{file_id}.pdf"
-        
-            try:
-                existing_announcement = documents.find_one({"file_id": instance["fileId"]})
-                if not existing_announcement:
+            if instance.get("heading", "end of day").lower() != "end of day":
+                
+                file_id = instance.get("fileId", "")
+                if file_id != "":
+                    f_name = f"./{file_id}.pdf"
+                
+                    try:
+                        existing_announcement = documents.find_one({"file_id": instance["fileId"]})
+                        if not existing_announcement:
 
-                    if instance.get("documentURL", "N/A") != "N/A":
-                        print(f"Downloading pdf from url: {instance['documentURL']}")
-                        
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                            'Accept': 'application/pdf,application/x-pdf,*/*',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Connection': 'keep-alive'
-                        }
-                        
-                        response = requests.get(instance["documentURL"], 
-                                                headers = headers,
-                                                auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
-                        
-                        print("Response status code: ", response.status_code)
-                        
-                        with open(f_name, "wb") as f:
-                            f.write(response.content)
-                            
-                        print(f"Succesfully downloaded pdf to {f_name}")
-                        
-                        print("Extracting unique hash from file")
-                        hash = _get_hash(f_name)
-                        print(f"Hash: {hash} for file: {f_name}")
-                        
-                        # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
-                        
-                        if not documents.find_one({"hash": hash}):
-                            print("Inserting new document into collection")
-                            
-                            try:
-                                s3_client.upload_file(f_name, "rtwasxreports", f"{hash}.pdf")
-                            except Exception as e:
-                                print(f"Error uploading file to s3 bucket: {e}")
-                
-                            #create_from_feed(f_name, hash, instance["code"])
-                        
-                            documents.insert_one(
-                                {
-                                    "file_id": instance["fileId"],
-                                    "title": instance["heading"],
-                                    "hash": hash,
-                                    "date_released": instance["dateTime"],
-                                    "price_sensitive": instance["isSensitive"],
-                                    "linked_ticker": instance["code"],
-                                    "news_types": instance["newsTypes"],
-                                    "prev_ticker": instance["prevCode"] if instance.get("releaseCode", "") != "" else "N/A",
+                            if instance.get("documentURL", "N/A") != "N/A":
+                                #print(f"Downloading pdf from url: {instance['documentURL']}")
+                                
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                                    'Accept': 'application/pdf,application/x-pdf,*/*',
+                                    'Accept-Encoding': 'gzip, deflate, br',
+                                    'Connection': 'keep-alive'
                                 }
-                            )
-                 
-                else:
-                    print(f"Document already exists in collection, skipping...")
+                                
+                                response = requests.get(instance["documentURL"], 
+                                                        headers = headers,
+                                                        auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
+                                
+                                #print("Response status code: ", response.status_code)
+                                
+                                with open(f_name, "wb") as f:
+                                    f.write(response.content)
+                                    
+                                #print(f"Succesfully downloaded pdf to {f_name}")
+                                
+                                #print("Extracting unique hash from file")
+                                hash = _get_hash(f_name)
+                                #print(f"Hash: {hash} for file: {f_name}")
+                                
+                                # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
+                                
+                                if not documents.find_one({"hash": hash}):
+                                    #print("Inserting new document into collection")
+                                    
+                                    try:
+                                        s3_client.upload_file(f_name, "rtwasxreports", f"{hash}.pdf")
+                                    except Exception as e:
+                                        print(f"Error uploading file to s3 bucket: {e}")
                         
-            except Exception as e:
-                print(f"Error validating announcement: {e}")
-             
-            # ensure that temp file is deleted after processing even if exception is thrown 
-                
-            if os.path.exists(f_name):
-                os.remove(f_name)
-                
+                                    #create_from_feed(f_name, hash, instance["code"])
+                                
+                                    documents.insert_one(
+                                        {
+                                            "file_id": instance["fileId"],
+                                            "title": instance["heading"],
+                                            "hash": hash,
+                                            "date_released": instance["dateTime"],
+                                            "price_sensitive": instance["isSensitive"],
+                                            "linked_ticker": instance["code"],
+                                            "news_types": instance["newsTypes"],
+                                            "prev_ticker": instance["releaseCode"] if instance.get("releaseCode", "") != "" else "N/A",
+                                        }
+                                    )
+                        
+                        else:
+                            print(f"Document already exists in collection, skipping...")
+                                
+                    except Exception as e:
+                        print(f"Error validating announcement {instance['fileId']}: {e}")
+                    
+                    # ensure that temp file is deleted after processing even if exception is thrown 
+                        
+                    if os.path.exists(f_name):
+                        os.remove(f_name)
+            else:
+                print("End of day or invalid header, skipping....")
                    
 async def renew_announcements() -> None:
     
@@ -225,17 +231,19 @@ async def lifespan(app: FastAPI):
     yield
     polling_task.cancel()
 
+'''
 pwd_policy = PasswordPolicy.from_names(
     length=8,
     uppercase=1,
     numbers=1,
     special=1
 )
+'''
 
 app = FastAPI(lifespan=lifespan)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-#TODO: replace with bcrypt to avoid logging error
+#app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+'''
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -297,11 +305,13 @@ def transcribe_video(video_path: str) -> str:
     except Exception as e:
         print(f"Error transcribing video: {e}")
         raise HTTPException(status_code=500, detail=f"Error transcribing video: {e}")
+''' 
     
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
+'''
 def validate_request(request: RegisterRequest) -> None:
     """Checks password, email and username to ensure all are valid and do not already exist in the collection
 
@@ -710,6 +720,7 @@ async def get_tickers(request: TickerRequest) -> dict:
     print(valid_tickers)
 
     return {"message": "Stocks fetched successfully", "tickers": valid_tickers}
+'''
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
