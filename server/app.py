@@ -49,6 +49,10 @@ try:
 except Exception as e:
     print(f"MongoDB connection: Failed - {e}")
 
+access_token = os.getenv("WEBFLOW_API_KEY")
+collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
+print(f"aT: {access_token}, cI: {collection_id}")
+
 db = client["main"]
 users = db["users"]
 posts = db["posts"]
@@ -148,7 +152,7 @@ def generate_content(file_path: str, ticker: str) -> dict:
         print(f"Generated image URL: {cover_image_url}")
     except Exception as e:
         print(f"Error generating content: {e}")
-        
+    
     content =  {
         "short_title": short_title,
         "long_title": long_title,
@@ -157,8 +161,12 @@ def generate_content(file_path: str, ticker: str) -> dict:
         "image_url": cover_image_url,
     }
     
+    return content
+    
+    '''
     with open("content.json", "w") as f:
         json.dump(content, f)
+    '''
 
 def push_to_site(file_path: str, hash: str, ticker: str) -> None:
     
@@ -170,6 +178,22 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
     generated = generate_content(file_path, ticker)
     print("Attempting webflow upload...")
     
+    fieldData = {
+        "name": generated["short_title"],
+        "title": generated["long_title"],
+        "short-title": generated["short_title"],
+        "content": generated["content"],
+        "hash-value": hash,
+        "summary": generated["summary"],
+        "image-url": generated["image_url"],
+        "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+        "ticker": ticker
+    }
+    
+    for key, value in fieldData.items():
+        print(f"{key}: {value}")
+    
+    '''
     try:
         response = requests.post(
         f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
@@ -196,7 +220,7 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
         
     except Exception as e:
         print(f"Error uploading to webflow: {e}")
-    
+    '''
 def validate_announcements(daily_log: dict) -> None:
     
     with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
