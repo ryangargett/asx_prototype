@@ -51,7 +51,6 @@ except Exception as e:
 
 access_token = os.getenv("WEBFLOW_API_KEY")
 collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
-print(f"aT: {access_token}, cI: {collection_id}")
 
 db = client["main"]
 users = db["users"]
@@ -173,8 +172,6 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
     access_token = os.getenv("WEBFLOW_API_KEY")
     collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
     
-    print(f"aT: {access_token}, cI: {collection_id}")
-    
     generated = generate_content(file_path, ticker)
     print("Attempting webflow upload...")
     
@@ -192,8 +189,7 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
     
     for key, value in fieldData.items():
         print(f"{key}: {value}")
-    
-    '''
+
     try:
         response = requests.post(
         f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
@@ -220,7 +216,7 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
         
     except Exception as e:
         print(f"Error uploading to webflow: {e}")
-    '''
+
 def validate_announcements(daily_log: dict) -> None:
     
     with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
@@ -313,9 +309,6 @@ async def renew_announcements() -> None:
     
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
-    
-    print(f"Username: {username}")
-    print(f"Password: {password}")
     
     if _inside_trading_hours():
         
