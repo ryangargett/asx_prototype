@@ -165,6 +165,8 @@ def push_to_site(file_path: str, hash: str, ticker: str) -> None:
     access_token = os.getenv("WEBFLOW_API_KEY")
     collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
     
+    print(f"aT: {access_token}, cI: {collection_id}")
+    
     generated = generate_content(file_path, ticker)
     print("Attempting webflow upload...")
     
