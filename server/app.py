@@ -59,7 +59,14 @@ documents = db["documents_new"]
 users.delete_many({})
 posts.delete_many({})
 
-s3_client = b3.client("s3", region_name="ap-southeast-2")
+# check if s3 connection can be established
+try:
+    s3_client = b3.client("s3",
+                        aws_access_key_id=os.getenv("AWS_ACCESS_KEY"),
+                        aws_secret_access_key=os.getenv("AWS_SECRET_KEY"),   
+                        region_name="ap-southeast-2")
+except Exception as e:
+    print(f"Error connecting to S3 bucket: {e}")
 '''
 users.insert_one({"username": "admin", 
                   "email": "",
