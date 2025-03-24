@@ -320,7 +320,11 @@ async def renew_announcements() -> None:
                 auth=(username, password)
             )
             print(f"Polled at {datetime.now()}")
-            await validate_announcements(daily_announcements.json())
+            
+            daily_announcements = list(daily_announcements.json())
+            daily_announcements.reverse()
+
+            await validate_announcements(daily_announcements)
         except Exception as e:
             print(f"Unexpected error encountered when polling ASX announcements: {e}")
     else:
