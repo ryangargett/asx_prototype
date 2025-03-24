@@ -53,8 +53,8 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
-documents = db["documents"]
-documents.delete_many({})
+documents = db["documents_new"]
+#documents.delete_many({})
 #stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
