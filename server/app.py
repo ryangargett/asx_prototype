@@ -58,7 +58,7 @@ posts = db["posts"]
 profiles = db["profiles"]
 documents = db["documents_new"]
 #documents.delete_many({})
-#stocks = db["stocks"]
+stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
 
@@ -167,57 +167,97 @@ def generate_content(file_path: str, ticker: str) -> dict:
         json.dump(content, f)
     '''
 
-def push_to_site(file_path: str, hash: str, ticker: str) -> None:
+def get_stock_data(ticker: str) -> dict:
+    stock_data = None
+    details = stocks.find_one({"ticker": ticker})
+    if details:
+        sector = details.get("sector", "N/A"),
+        
+        if "oil & gas" in details.get("industry", "").lower():
+            industry = "Oil & Gas"
+        elif "industrial metals" in details.get("industry", "").lower():
+            industry = "Industrial Metals"
+        elif "precious metals" in details.get("industry", "").lower():
+            industry = "Precious Metals"
+        elif "lumber" in details.get("industry", "").lower():
+            industry = "Lumber"
+        elif "packaging" in details.get("industry", "").lower():
+            industry = "Packaging"
+        elif "construction machinery" in details.get("industry", "").lower():
+            industry = "Heavy Machinery"
+        elif "freight" in details.get("industry", "").lower():
+            industry = "Freight & Logistics"
+        elif "agriculture" in details.get("industry", "").lower() or "farm" in details.get("industry", "").lower():
+            industry = "Agriculture"
+        else:
+            industry = details.get("industry", "N/A")
+        
+        if sector != "N/A" and industry != "N/A":
+            stock_data = {
+                "sector": sector,
+                "industry": industry
+            }
+    
+    return stock_data
+
+def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> None:
     
     access_token = os.getenv("WEBFLOW_API_KEY")
     collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
     
     generated = generate_content(file_path, ticker)
+    stock_data = get_stock_data(ticker)
     print("Attempting webflow upload...")
     
-    fieldData = {
-        "name": generated["short_title"],
-        "title": generated["long_title"],
-        "short-title": generated["short_title"],
-        "content": generated["content"],
-        "hash-value": hash,
-        "summary": generated["summary"],
-        "image-url": generated["image_url"],
-        "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-        "ticker": ticker
-    }
+    if generated and stock_data:
     
-    for key, value in fieldData.items():
-        print(f"{key}: {value}")
-
-    try:
-        response = requests.post(
-        f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
-        headers = {
-            "Authorization": "Bearer " + access_token,
-            "Content-Type": "application/json"
-        },
-        json = {
-            "fieldData": {
-                "name": generated["short_title"],
-                "title": generated["long_title"],
-                "short-title": generated["short_title"],
-                "content": generated["content"],
-                "hash-value": hash,
-                "summary": generated["summary"],
-                "image-url": generated["image_url"],
-                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-                "ticker": ticker                
-            }
+        fieldData = {
+            "name": generated["short_title"],
+            "title": generated["long_title"],
+            "short-title": generated["short_title"],
+            "formal-title": formal_title,
+            "content": generated["content"],
+            "hash-value": hash,
+            "summary": generated["summary"],
+            "image-url": generated["image_url"],
+            "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+            "ticker": ticker,
+            "sector": stock_data["sector"],
+            "industry": stock_data["industry"]
         }
-    )
-    
-        print(response.json())
+
+        try:
+            response = requests.post(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + access_token,
+                "Content-Type": "application/json"
+            },
+            json = {
+                "fieldData": {
+                    "name": generated["short_title"],
+                    "title": generated["long_title"],
+                    "short-title": generated["short_title"],
+                    "content": generated["content"],
+                    "hash-value": hash,
+                    "summary": generated["summary"],
+                    "image-url": generated["image_url"],
+                    "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+                    "ticker": ticker                
+                }
+            }
+        )
         
-    except Exception as e:
-        print(f"Error uploading to webflow: {e}")
+            print(response.json())
+            
+        except Exception as e:
+            print(f"Error uploading to webflow: {e}")
+    else:
+        print("Error: poorly content or stock data, skipping upload...")
 
 def validate_announcements(daily_log: dict) -> None:
+    
+    legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
     
     with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
         for instance_idx, instance in enumerate(daily_log):
@@ -273,8 +313,8 @@ def validate_announcements(daily_log: dict) -> None:
                                         print(f"Error uploading file to s3 bucket: {e}")
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                                    if instance.get("isSensitive", "N") == "Y":
-                                        push_to_site(f_name, hash, instance["code"])
+                                    if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
+                                        push_to_site(f_name, hash, instance["code"], instance["heading"])
                                 
                                     documents.insert_one(
                                         {
