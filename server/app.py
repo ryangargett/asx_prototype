@@ -2,6 +2,7 @@ import asyncio
 import mimetypes
 import os
 import json
+import random
 import requests
 import shutil
 import time
@@ -36,7 +37,6 @@ from tqdm import tqdm
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 from image_search import get_url_from_keyword
-from stock_fetcher import get_asx_tickers, get_company_info
 
 encrypter = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -56,7 +56,7 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
-documents = db["documents_new"]
+documents = db["documents_new_2"]
 #documents.delete_many({})
 stocks = db["stocks"]
 users.delete_many({})
@@ -129,6 +129,7 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
 '''
 
 def generate_content(file_path: str, ticker: str) -> dict:
+    
     try:
         print("Reading document...")
         parsed_content = read_pdf(file_path)
@@ -144,11 +145,10 @@ def generate_content(file_path: str, ticker: str) -> dict:
         print("Suggesting title(s)...")
         short_title, long_title = suggest_title(parsed_content, ticker)
         print(f"Generated short title: {short_title}, Long title: {long_title}")
-        print("Suggesting image keywords...")
-        suggested_image_kwords = suggest_image_kwords(ticker, short_title)
-        print("Fetching image URL...")
-        cover_image_url = get_url_from_keyword(suggested_image_kwords)
-        print(f"Generated image URL: {cover_image_url}")
+        #print("Suggesting image keywords...")
+        #suggested_image_kwords = suggest_image_kwords(ticker, short_title)
+        #print(f"Generated kwords: {suggested_image_kwords}")
+        #print("Fetching image URL...")
     except Exception as e:
         print(f"Error generating content: {e}")
     
@@ -156,22 +156,19 @@ def generate_content(file_path: str, ticker: str) -> dict:
         "short_title": short_title,
         "long_title": long_title,
         "content": document_content,
-        "summary": summary,
-        "image_url": cover_image_url,
+        "summary": summary
     }
     
     return content
-    
-    '''
-    with open("content.json", "w") as f:
-        json.dump(content, f)
-    '''
 
 def get_stock_data(ticker: str) -> dict:
     stock_data = None
     details = stocks.find_one({"ticker": ticker})
     if details:
-        sector = details.get("sector", "N/A"),
+        
+        print(details)
+        
+        sector = details.get("sector", "N/A")
         
         if "oil & gas" in details.get("industry", "").lower():
             industry = "Oil & Gas"
@@ -200,13 +197,57 @@ def get_stock_data(ticker: str) -> dict:
     
     return stock_data
 
+def _get_url_from_bucket(bucket: str) -> str:
+    url = None    
+    response = s3_client.list_objects_v2(
+        Bucket = "rtwimages",
+        Prefix = f"{bucket}/",
+    )
+    
+    try:
+        random_image = random.choice(response["Contents"])
+        image_key = random_image["Key"]
+        url = f"https://rtwimages.s3.ap-southeast-2.amazonaws.com/{image_key}"
+        
+        print(f"Image URL: {url}")
+    except Exception as e:
+        print(f"Error fetching image URL from bucket: {e}")
+        
+    return url
+    
+def get_cover_image(industry: str) -> str:
+
+    #TODO: Significantly expand this system
+
+    if "oil & gas" in industry.lower():
+        bucket = "oilandgas"
+    elif "renewable" in industry.lower():
+        bucket = "renewables"
+    elif "nuclear" in industry.lower():
+        bucket = "nuclear"
+    elif "chemicals" in industry.lower():
+        bucket = "chemicals"
+    else:
+        bucket = "mining"
+    
+    url = _get_url_from_bucket(bucket)
+    
+    return url
+
 def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> None:
     
     access_token = os.getenv("WEBFLOW_API_KEY")
     collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
     
+    print(ticker)
+    
     generated = generate_content(file_path, ticker)
     stock_data = get_stock_data(ticker)
+    
+    cover_image = get_cover_image(stock_data["sector"], stock_data["industry"])
+    
+    print(stock_data)
+    
     print("Attempting webflow upload...")
     
     if generated and stock_data:
@@ -219,11 +260,11 @@ def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> N
             "content": generated["content"],
             "hash-value": hash,
             "summary": generated["summary"],
-            "image-url": generated["image_url"],
+            "image-url": cover_image,
             "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-            "ticker": ticker,
-            "sector": stock_data["sector"],
-            "industry": stock_data["industry"]
+            "sector-2": stock_data["sector"], # no idea why this happens, need to investigate later
+            "industry": stock_data["industry"],
+            "ticker-3": ticker
         }
 
         try:
@@ -234,17 +275,7 @@ def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> N
                 "Content-Type": "application/json"
             },
             json = {
-                "fieldData": {
-                    "name": generated["short_title"],
-                    "title": generated["long_title"],
-                    "short-title": generated["short_title"],
-                    "content": generated["content"],
-                    "hash-value": hash,
-                    "summary": generated["summary"],
-                    "image-url": generated["image_url"],
-                    "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-                    "ticker": ticker                
-                }
+                "fieldData": fieldData
             }
         )
         
@@ -314,7 +345,11 @@ def validate_announcements(daily_log: dict) -> None:
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
                                     if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
-                                        push_to_site(f_name, hash, instance["code"], instance["heading"])
+                                        print("Discovered legal entry!")
+                                        
+                                        ticker = instance["code"] + ".AX"
+                                        
+                                        push_to_site(f_name, hash, ticker, instance["heading"])
                                 
                                     documents.insert_one(
                                         {
