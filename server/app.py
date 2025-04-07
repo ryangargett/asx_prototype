@@ -163,6 +163,10 @@ def generate_content(file_path: str, ticker: str) -> dict:
 
 def get_stock_data(ticker: str) -> dict:
     stock_data = None
+    
+    ticker_elements = ticker.split(":")
+    ticker = ticker_elements[1] + ".AX"
+    
     details = stocks.find_one({"ticker": ticker})
     if details:
         
@@ -198,20 +202,24 @@ def get_stock_data(ticker: str) -> dict:
     return stock_data
 
 def _get_url_from_bucket(bucket: str) -> str:
-    url = None    
+    url = "https://rtwimages.s3.ap-southeast-2.amazonaws.com/PLACEHOLDER.png"    
     response = s3_client.list_objects_v2(
         Bucket = "rtwimages",
         Prefix = f"{bucket}/",
     )
     
+    images = response.get("Contents", [])
+    if len(images) > 1:
+        images = images[1:] # avoid selecting base folder as index
+    
     try:
-        random_image = random.choice(response["Contents"])
+        random_image = random.choice(images)
         image_key = random_image["Key"]
         url = f"https://rtwimages.s3.ap-southeast-2.amazonaws.com/{image_key}"
         
         print(f"Image URL: {url}")
     except Exception as e:
-        print(f"Error fetching image URL from bucket: {e}")
+        print(f"Error fetching image URL from bucket: {e}, using default....")
         
     return url
     
@@ -223,10 +231,22 @@ def get_cover_image(industry: str) -> str:
         bucket = "oilandgas"
     elif "renewable" in industry.lower():
         bucket = "renewables"
-    elif "nuclear" in industry.lower():
+    elif "uranium" in industry.lower():
         bucket = "nuclear"
-    elif "chemicals" in industry.lower():
+    elif "chemical" in industry.lower():
         bucket = "chemicals"
+    elif "coal" in industry.lower():
+        bucket = "coal"
+    elif "lumber" in industry.lower():
+        bucket = "lumber"
+    elif "packaging" in industry.lower():
+        bucket = "packaging"
+    elif "gold" in industry.lower():
+        bucket = "gold"
+    elif "steel" in industry.lower():
+        bucket = "steel"
+    elif "agriculture" in industry.lower():
+        bucket = "agriculture"
     else:
         bucket = "mining"
     
@@ -244,7 +264,7 @@ def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> N
     generated = generate_content(file_path, ticker)
     stock_data = get_stock_data(ticker)
     
-    cover_image = get_cover_image(stock_data["sector"], stock_data["industry"])
+    cover_image = get_cover_image(stock_data["industry"])
     
     print(stock_data)
     
