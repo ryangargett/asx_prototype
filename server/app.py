@@ -3,6 +3,7 @@ import mimetypes
 import os
 import json
 import random
+import regex as re
 import requests
 import shutil
 import time
@@ -76,6 +77,9 @@ users.insert_one({"username": "admin",
                   "password": encrypter.hash("admin"),
                   "elevation": "admin"})
 '''
+
+webflow_access_token = os.getenv("WEBFLOW_API_KEY")
+
 def _inside_trading_hours() -> bool:
     try:
         print(f"Checking trading hours at {datetime.now()}")
@@ -138,7 +142,7 @@ def generate_content(file_path: str, ticker: str) -> dict:
         print("Generated content: ", document_content)
         print("Generating blurb...")
         
-        prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be appropriate for a finance blog targeted towards beginner traders.\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         summary = summarize_content(parsed_content, ticker, prompt = prompt)
         
         print("Generated summary: ", summary)
@@ -165,7 +169,10 @@ def get_stock_data(ticker: str) -> dict:
     stock_data = None
     
     ticker_elements = ticker.split(":")
-    ticker = ticker_elements[1] + ".AX"
+    if len(ticker_elements) > 1:
+        ticker = ticker_elements[1] + ".AX"
+    else:
+        ticker = ticker + ".AX"
     
     details = stocks.find_one({"ticker": ticker})
     if details:
@@ -184,22 +191,100 @@ def get_stock_data(ticker: str) -> dict:
             industry = "Lumber"
         elif "packaging" in details.get("industry", "").lower():
             industry = "Packaging"
-        elif "construction machinery" in details.get("industry", "").lower():
+        elif "machinery" in details.get("industry", "").lower():
             industry = "Heavy Machinery"
+        elif "construction" in details.get("industry", "").lower():
+            industry = "Construction"
+        elif re.search(r"chemical*", details.get("industry", ""), re.IGNORECASE):
+            industry = "Chemicals"
+        elif re.search(r"biotech*", details.get("industry", ""), re.IGNORECASE):
+            industry = "Biotech"
         elif "freight" in details.get("industry", "").lower():
-            industry = "Freight & Logistics"
-        elif "agriculture" in details.get("industry", "").lower() or "farm" in details.get("industry", "").lower():
+            industry = "Logistics"
+        elif re.search(r"agricultu*|farm*", details.get("industry", ""), re.IGNORECASE):
             industry = "Agriculture"
+        elif "silver" in details.get("industry", "").lower():
+            industry = "Silver"
+        elif "uranium" in details.get("industry", "").lower():
+            industry = "Uranium"
+        elif "coal" in details.get("industry", "").lower():
+            industry = "Coal"
+        elif "copper" in details.get("industry", "").lower():
+            industry = "Copper"
+        elif "gold" in details.get("industry", "").lower():
+            industry = "Gold"
+        elif "steel" in details.get("industry", "").lower():
+            industry = "Steel"
+        elif "aluminum" in details.get("industry", "").lower():
+            industry = "Aluminum"
+        elif re.search(r"renewable*", details.get("industry", ""), re.IGNORECASE):
+            industry = "Renewables"        
         else:
-            industry = details.get("industry", "N/A")
+            industry = "Other"
         
-        if sector != "N/A" and industry != "N/A":
-            stock_data = {
-                "sector": sector,
-                "industry": industry
-            }
+        return {
+            "sector": sector,
+            "industry": industry
+        }
     
     return stock_data
+
+def push_to_collection(collection_id: str, payload: dict) -> None:
+    try:
+        response = requests.post(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            json = {
+                "fieldData": payload
+            }
+        )
+        
+        print(response.json())
+            
+    except Exception as e:
+        print(f"Error uploading to webflow: {e}")
+
+def search_collection(collection_id: str, search_query: str) -> str:
+    offset = 0
+    page_limit = 100
+    collected_all = False
+    all_items = []
+
+    while not collected_all:
+
+        try:
+            response = requests.get(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            params = {
+                "offset": offset
+            }
+        )
+            
+        except Exception as e:
+            print(f"Error uploading to webflow: {e}")
+
+        all_items.extend(response.json()["items"])
+        
+        if len(response.json()["items"]) < page_limit:
+            collected_all = True
+        else:
+            offset += page_limit
+            
+    item_id = None
+    for item in all_items:
+        if item["fieldData"]["name"] == search_query:
+            return item["id"]
+    
+    print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
+    return item_id
+        
 
 def _get_url_from_bucket(bucket: str) -> str:
     url = "https://rtwimages.s3.ap-southeast-2.amazonaws.com/PLACEHOLDER.png"    
@@ -247,6 +332,14 @@ def get_cover_image(industry: str) -> str:
         bucket = "steel"
     elif "agriculture" in industry.lower():
         bucket = "agriculture"
+    elif "construction" in industry.lower():
+        bucket = "construction"
+    elif "biotech" in industry.lower():
+        bucket = "biotech"
+    elif "logistics" in industry.lower():
+        bucket = "logistics"
+    elif "silver" in industry.lower():
+        bucket = "silver"
     else:
         bucket = "mining"
     
@@ -254,15 +347,33 @@ def get_cover_image(industry: str) -> str:
     
     return url
 
-def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> None:
+def push_announcement_to_site(hash: str, ticker: str, formal_title: str, market_sensitive: bool) -> None:
     
-    access_token = os.getenv("WEBFLOW_API_KEY")
-    collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
+    #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
     
-    print(ticker)
+    #ticker_collection_id = os.getenv("WEBFLOW_TICKER_COLLECTION_ID")
+    #ticker_id = search_collection(ticker_collection_id, ticker)
     
+    fieldData = {
+        "name": hash,
+        "announcement-title": formal_title,
+        "announcement-company": ticker,
+        "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+        "market-sensitive": market_sensitive == "Y"
+    }
+    
+    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
+    
+    push_to_collection(announcement_collection_id, fieldData)
+
+def push_article_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> None:
+    collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     generated = generate_content(file_path, ticker)
     stock_data = get_stock_data(ticker)
+    
+    sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+    industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+    ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), ticker)
     
     cover_image = get_cover_image(stock_data["industry"])
     
@@ -282,27 +393,13 @@ def push_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> N
             "summary": generated["summary"],
             "image-url": cover_image,
             "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-            "sector-2": stock_data["sector"], # no idea why this happens, need to investigate later
-            "industry": stock_data["industry"],
-            "ticker-3": ticker
+            "article-sector": sector_id,
+            "article-industry": industry_id,
+            "article-ticker": ticker_id
         }
-
-        try:
-            response = requests.post(
-            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
-            headers = {
-                "Authorization": "Bearer " + access_token,
-                "Content-Type": "application/json"
-            },
-            json = {
-                "fieldData": fieldData
-            }
-        )
         
-            print(response.json())
-            
-        except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+        push_to_collection(collection_id, fieldData)
+        
     else:
         print("Error: poorly content or stock data, skipping upload...")
 
@@ -326,8 +423,6 @@ def validate_announcements(daily_log: dict) -> None:
                         if not existing_announcement:
 
                             if instance.get("documentURL", "N/A") != "N/A":
-                                #print(f"Downloading pdf from url: {instance['documentURL']}")
-                                
                                 headers = {
                                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                     'Accept': 'application/pdf,application/x-pdf,*/*',
@@ -339,22 +434,12 @@ def validate_announcements(daily_log: dict) -> None:
                                                         headers = headers,
                                                         auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
                                 
-                                #print("Response status code: ", response.status_code)
-                                
                                 with open(f_name, "wb") as f:
                                     f.write(response.content)
                                     
-                                #print(f"Succesfully downloaded pdf to {f_name}")
-                                
-                                #print("Extracting unique hash from file")
                                 hash = get_hash(f_name)
-                                #print(f"Hash: {hash} for file: {f_name}")
-                                
-                                # IMPORTANT: Check whether the hash already exists inside mongo instance to avoid duplicate uploading to s3 bucket
                                 
                                 if not documents.find_one({"hash": hash}):
-                                    #print("Inserting new document into collection")
-                                    
                                     try:
                                         s3_client.upload_file(f_name, 
                                                               "rtwasxreports", 
@@ -362,14 +447,13 @@ def validate_announcements(daily_log: dict) -> None:
                                                               ExtraArgs={"ContentType": "application/pdf"})
                                     except Exception as e:
                                         print(f"Error uploading file to s3 bucket: {e}")
+                                        
+                                    push_announcement_to_site(hash, instance["code"], instance["heading"], instance["isSensitive"])
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
                                     if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
-                                        print("Discovered legal entry!")
-                                        
-                                        ticker = instance["code"] + ".AX"
-                                        
-                                        push_to_site(f_name, hash, ticker, instance["heading"])
+                                        print("Discovered legal entry!")                                 
+                                        push_article_to_site(f_name, hash, instance["code"], instance["heading"])
                                 
                                     documents.insert_one(
                                         {
