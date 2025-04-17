@@ -229,6 +229,38 @@ def get_stock_data(ticker: str) -> dict:
     
     return stock_data
 
+def _get_collection_size(collection_id: str) -> int:
+    offset = 0
+    page_limit = 100
+    collected_all = False
+    all_items = []
+
+    while not collected_all:
+
+        try:
+            response = requests.get(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            params = {
+                "offset": offset
+            }
+        )
+            
+        except Exception as e:
+            print(f"Error uploading to webflow: {e}")
+
+        all_items.extend(response.json()["items"])
+        
+        if len(response.json()["items"]) < page_limit:
+            collected_all = True
+        else:
+            offset += page_limit
+            
+    return len(all_items)
+
 def push_to_collection(collection_id: str, payload: dict) -> None:
     try:
         response = requests.post(
@@ -247,7 +279,7 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
     except Exception as e:
         print(f"Error uploading to webflow: {e}")
 
-def search_collection(collection_id: str, search_query: str) -> str:
+def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
     offset = 0
     page_limit = 100
     collected_all = False
@@ -279,7 +311,7 @@ def search_collection(collection_id: str, search_query: str) -> str:
             
     item_id = None
     for item in all_items:
-        if item["fieldData"]["name"] == search_query:
+        if item["fieldData"][field] == search_query:
             return item["id"]
     
     print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
@@ -376,43 +408,116 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     
     push_to_collection(announcement_collection_id, fieldData)
 
+def delete_item(collection_id: str, item_id: str) -> None:
+    # need to unpublish the live item first to completely drop it from the collection
+    try:
+            response = requests.delete(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/{item_id}/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            }
+        )
+    except Exception as e:
+        print(f"Error dropping live item from webflow: {e}")
+        
+    try:
+            response = requests.delete(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/{item_id}",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            }
+        )
+    except Exception as e:
+        print(f"Error deleting from webflow: {e}")
+
+def drop_oldest(collection_id: str) -> None:
+    offset = 0
+    page_limit = 100
+    collected_all = False
+    all_items = []
+    
+    while not collected_all:
+
+        try:
+            response = requests.get(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            params = {
+                "offset": offset
+            }
+        )
+            
+        except Exception as e:
+            print(f"Error uploading to webflow: {e}")
+
+        all_items.extend(response.json()["items"])
+        
+        if len(response.json()["items"]) < page_limit:
+            collected_all = True
+        else:
+            offset += page_limit
+            
+    oldest_item_id = all_items[-1]["id"]
+    
+    delete_item(collection_id, oldest_item_id)
+    
+    
+
 def push_article_to_site(file_path: str, hash: str, formatted_datetime: str, ticker: str, formal_title: str) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
-    generated = generate_content(file_path, ticker)
-    stock_data = get_stock_data(ticker)
     
-    sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-    industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-    ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+    # first check to see that the article does not already exist on site, this should be covered by the archive check step earlier but this is used as a backup
     
-    cover_image = get_cover_image(stock_data["industry"])
-    
-    print(stock_data)
-    
-    print("Attempting webflow upload...")
-    
-    if generated and stock_data:
-    
-        fieldData = {
-            "name": generated["short_title"],
-            "article-datetime": formatted_datetime,
-            "title": generated["long_title"],
-            "short-title": generated["short_title"],
-            "formal-title": formal_title,
-            "content": generated["content"],
-            "hash-value": hash,
-            "summary": generated["summary"],
-            "image-url": cover_image,
-            "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-            "article-sector": sector_id,
-            "article-industry": industry_id,
-            "article-ticker": ticker_id,
-        }
-        
-        push_to_collection(collection_id, fieldData)
-        
+    article_id = search_collection(collection_id, hash, "hash-value")
+    if article_id:
+        print(f"ERROR: Attempted publication failed due to prexisting article on website, skipping....")
     else:
-        print("Error: poorly content or stock data, skipping upload...")
+    
+        num_articles = _get_collection_size(collection_id)
+        if num_articles > os.getenv("MAXIMUM_ARTICLES"):
+            print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
+            drop_oldest(collection_id)
+        
+        generated = generate_content(file_path, ticker)
+        stock_data = get_stock_data(ticker)
+        
+        sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+        industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+        ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+        
+        cover_image = get_cover_image(stock_data["industry"])
+        
+        print(stock_data)
+        
+        print("Attempting webflow upload...")
+        
+        if generated and stock_data:
+        
+            fieldData = {
+                "name": generated["short_title"],
+                "article-datetime": formatted_datetime,
+                "title": generated["long_title"],
+                "short-title": generated["short_title"],
+                "formal-title": formal_title,
+                "content": generated["content"],
+                "hash-value": hash,
+                "summary": generated["summary"],
+                "image-url": cover_image,
+                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+                "article-sector": sector_id,
+                "article-industry": industry_id,
+                "article-ticker": ticker_id,
+            }
+            
+            push_to_collection(collection_id, fieldData)
+            
+        else:
+            print("Error: malformed content or stock data, skipping upload...")
         
 def _format_datetime(unformatted_datetime: str) -> str:
     try:
