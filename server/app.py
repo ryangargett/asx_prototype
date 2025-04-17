@@ -347,7 +347,7 @@ def get_cover_image(industry: str) -> str:
     
     return url
 
-def push_announcement_to_site(hash: str, ticker: str, formal_title: str, market_sensitive: bool) -> None:
+def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool) -> None:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
     
@@ -356,24 +356,25 @@ def push_announcement_to_site(hash: str, ticker: str, formal_title: str, market_
     
     fieldData = {
         "name": hash,
+        "announcement-datetime": datetime,
         "announcement-title": formal_title,
         "announcement-company": ticker,
         "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-        "market-sensitive": market_sensitive == "Y"
+        "market-sensitive": market_sensitive
     }
     
     announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
     
     push_to_collection(announcement_collection_id, fieldData)
 
-def push_article_to_site(file_path: str, hash: str, ticker: str, formal_title: str) -> None:
+def push_article_to_site(file_path: str, hash: str, formatted_datetime: str, ticker: str, formal_title: str) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     generated = generate_content(file_path, ticker)
     stock_data = get_stock_data(ticker)
     
     sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
     industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-    ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), ticker)
+    ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
     
     cover_image = get_cover_image(stock_data["industry"])
     
@@ -385,6 +386,7 @@ def push_article_to_site(file_path: str, hash: str, ticker: str, formal_title: s
     
         fieldData = {
             "name": generated["short_title"],
+            "article-datetime": formatted_datetime,
             "title": generated["long_title"],
             "short-title": generated["short_title"],
             "formal-title": formal_title,
@@ -395,13 +397,23 @@ def push_article_to_site(file_path: str, hash: str, ticker: str, formal_title: s
             "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
             "article-sector": sector_id,
             "article-industry": industry_id,
-            "article-ticker": ticker_id
+            "article-ticker": ticker_id,
         }
         
         push_to_collection(collection_id, fieldData)
         
     else:
         print("Error: poorly content or stock data, skipping upload...")
+        
+def _format_datetime(unformatted_datetime: str) -> str:
+    try:
+        dt = datetime.strptime(unformatted_datetime, '%d-%b-%Y %H:%M:%S')
+        formatted_datetime = dt.isoformat() # converts to acceptable webflow dt format
+        
+        print(f"Original: {unformatted_datetime} | Converted: {formatted_datetime}")
+        return formatted_datetime
+    except ValueError as e:
+        print(f"Error parsing datetime string: {e}")
 
 def validate_announcements(daily_log: dict) -> None:
     
@@ -448,12 +460,14 @@ def validate_announcements(daily_log: dict) -> None:
                                     except Exception as e:
                                         print(f"Error uploading file to s3 bucket: {e}")
                                         
-                                    push_announcement_to_site(hash, instance["code"], instance["heading"], instance["isSensitive"])
+                                    formatted_datetime = _format_datetime(instance["dateTime"])
+                                        
+                                    #push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y")
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
                                     if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
                                         print("Discovered legal entry!")                                 
-                                        push_article_to_site(f_name, hash, instance["code"], instance["heading"])
+                                        push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
                                 
                                     documents.insert_one(
                                         {
