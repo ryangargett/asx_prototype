@@ -347,12 +347,17 @@ def get_cover_image(industry: str) -> str:
     
     return url
 
-def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool) -> None:
+def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
     
     #ticker_collection_id = os.getenv("WEBFLOW_TICKER_COLLECTION_ID")
     #ticker_id = search_collection(ticker_collection_id, ticker)
+    
+    if market_sensitive:
+        item_colour = "#FFBF00"
+    else:
+        item_colour = "#FFFFFF"
     
     fieldData = {
         "name": hash,
@@ -360,7 +365,11 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         "announcement-title": formal_title,
         "announcement-company": ticker,
         "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-        "market-sensitive": market_sensitive
+        "market-sensitive": market_sensitive,
+        "cash-flow": is_cash_flow,
+        "substantial": is_substantial,
+        "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+        
     }
     
     announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
@@ -461,13 +470,16 @@ def validate_announcements(daily_log: dict) -> None:
                                         print(f"Error uploading file to s3 bucket: {e}")
                                         
                                     formatted_datetime = _format_datetime(instance["dateTime"])
+                                    
+                                    is_cash_flow = True if (("cash" in instance["heading"].lower()) or ("cashflow" in instance["heading"].lower())) else False
+                                    is_substantial = True if "substantial" in instance["heading"].lower() else False
                                         
-                                    #push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y")
+                                    push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                                    if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
-                                        print("Discovered legal entry!")                                 
-                                        push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
+                                    #if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
+                                    #    print("Discovered legal entry!")                                 
+                                    #    push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
                                 
                                     documents.insert_one(
                                         {
