@@ -57,8 +57,8 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
-documents = db["documents_new_2"]
-#documents.delete_many({})
+documents = db["documents_new"]
+documents.delete_many({})
 stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
@@ -259,7 +259,8 @@ def _get_collection_size(collection_id: str) -> int:
         else:
             offset += page_limit
             
-    return len(all_items)
+    num_articles = len(all_items)
+    return 0 if num_articles is None else num_articles
 
 def push_to_collection(collection_id: str, payload: dict) -> None:
     try:
@@ -310,10 +311,11 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
             offset += page_limit
             
     item_id = None
-    for item in all_items:
-        if item["fieldData"][field] == search_query:
-            return item["id"]
-    
+    if len(all_items) > 0:
+        for item in all_items:
+            if item["fieldData"][field] == search_query:
+                return item["id"]
+        
     print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
     return item_id
         
@@ -466,20 +468,36 @@ def drop_oldest(collection_id: str) -> None:
     
     delete_item(collection_id, oldest_item_id)
     
-    
-
-def push_article_to_site(file_path: str, hash: str, formatted_datetime: str, ticker: str, formal_title: str) -> None:
+def _get_industry_group(industry: str) -> str:
+    if industry in ["Aluminum", "Copper", "Gold", "Industrial Metals", "Precious Metals", "Silver", "Steel"]:
+        return "Metals and Mining"
+    elif industry in ["Lumber"]:
+        return "Forestry and Paper Products"
+    elif industry in ["Coal", "Oil and Gas"]:
+        return "Consumables"
+    elif industry in ["Green Energy", "Uranium"]:
+        return "Renewables"
+    elif industry in ["Construction", "Heavy Machinery"]:
+        return "Construction Materials"
+    elif industry in ["Agriculture", "Biotech", "Chemicals"]:
+        return "Industrial Chemicals"
+    elif industry in ["Logistics", "Packaging"]:
+        return "Containers and Packaging"
+    else:
+        return "Consumables" # default case
+def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
+    print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
     
     # first check to see that the article does not already exist on site, this should be covered by the archive check step earlier but this is used as a backup
-    
-    article_id = search_collection(collection_id, hash, "hash-value")
+
+    article_id = search_collection(collection_id, announcement_hash, "hash-value")
     if article_id:
         print(f"ERROR: Attempted publication failed due to prexisting article on website, skipping....")
     else:
     
         num_articles = _get_collection_size(collection_id)
-        if num_articles > os.getenv("MAXIMUM_ARTICLES"):
+        if num_articles is not None and num_articles > max_articles:
             print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
             drop_oldest(collection_id)
         
@@ -488,11 +506,13 @@ def push_article_to_site(file_path: str, hash: str, formatted_datetime: str, tic
         
         sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
         industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
         ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
         
         cover_image = get_cover_image(stock_data["industry"])
         
         print(stock_data)
+        
         
         print("Attempting webflow upload...")
         
@@ -505,13 +525,14 @@ def push_article_to_site(file_path: str, hash: str, formatted_datetime: str, tic
                 "short-title": generated["short_title"],
                 "formal-title": formal_title,
                 "content": generated["content"],
-                "hash-value": hash,
+                "hash-value": announcement_hash,
                 "summary": generated["summary"],
                 "image-url": cover_image,
-                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
                 "article-sector": sector_id,
                 "article-industry": industry_id,
                 "article-ticker": ticker_id,
+                "article-industry-group": industry_group_id
             }
             
             push_to_collection(collection_id, fieldData)
@@ -523,8 +544,6 @@ def _format_datetime(unformatted_datetime: str) -> str:
     try:
         dt = datetime.strptime(unformatted_datetime, '%d-%b-%Y %H:%M:%S')
         formatted_datetime = dt.isoformat() # converts to acceptable webflow dt format
-        
-        print(f"Original: {unformatted_datetime} | Converted: {formatted_datetime}")
         return formatted_datetime
     except ValueError as e:
         print(f"Error parsing datetime string: {e}")
@@ -535,7 +554,7 @@ def validate_announcements(daily_log: dict) -> None:
     
     with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
         for instance_idx, instance in enumerate(daily_log):
-            pbar.set_postfix_str(f"Processing announcement {instance_idx + 1} / {len(daily_log)}")
+            pbar.set_postfix_str(f"Processing announcement {instance_idx + 1} / {len(daily_log)} | {instance['dateTime']}")
             pbar.update(1)
         
             if instance.get("heading", "end of day").lower() != "end of day":
@@ -579,12 +598,12 @@ def validate_announcements(daily_log: dict) -> None:
                                     is_cash_flow = True if (("cash" in instance["heading"].lower()) or ("cashflow" in instance["heading"].lower())) else False
                                     is_substantial = True if "substantial" in instance["heading"].lower() else False
                                         
-                                    push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
+                                    #push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                                    #if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
-                                    #    print("Discovered legal entry!")                                 
-                                    #    push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
+                                    if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
+                                        print("Discovered legal entry!")                                 
+                                        push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
                                 
                                     documents.insert_one(
                                         {
