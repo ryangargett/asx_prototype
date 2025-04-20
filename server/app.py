@@ -130,6 +130,8 @@ def reset_daily_announcements() -> None:
     if len(all_items) > 0:
         for item in all_items:
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
+    else:
+        print(f"ERROR: No announcements found in collection {collection_id} to reset")
            
     print(f"Announcements successfully reset")
 
