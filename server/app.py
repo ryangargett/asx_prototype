@@ -130,6 +130,8 @@ def reset_daily_announcements() -> None:
     if len(all_items) > 0:
         for item in all_items:
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
+    else:
+        print(f"ERROR: No announcements found in collection {collection_id} to reset")
            
     print(f"Announcements successfully reset")
 
@@ -698,9 +700,12 @@ async def renew_announcements() -> None:
         
         curr_time = _get_curr_time()
         
-        if curr_time.hour() >= 23 and curr_time.minute() >= 30:
-            print(f"End of day, resetting announcements")
-            reset_daily_announcements()
+        if curr_time.weekday() < 4: # Monday to Thursday, we keep announcements over the weekend
+            if curr_time.hour() >= 23 and curr_time.minute() >= 30:
+                print(f"End of trading day, resetting announcements....")
+                reset_daily_announcements()
+        else:
+            print(f"Day is not a trading day, skipping reset....")
             
     
     await asyncio.sleep(120)
