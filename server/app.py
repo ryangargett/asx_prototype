@@ -96,7 +96,7 @@ def _inside_trading_hours() -> bool:
     except Exception as e:
         print(f"Error encountered when checking trading hours: {e}")
     
-    return True
+    return False
 
 def reset_daily_announcements() -> None:
     offset = 0
