@@ -58,7 +58,7 @@ users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
 documents = db["documents_new"]
-documents.delete_many({})
+#documents.delete_many({})
 stocks = db["stocks"]
 users.delete_many({})
 posts.delete_many({})
@@ -80,12 +80,15 @@ users.insert_one({"username": "admin",
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
+def _get_curr_time():
+    target_tz = tz("Australia/Sydney")
+    curr_time = datetime.now().astimezone(target_tz)
+    return curr_time
+
 def _inside_trading_hours() -> bool:
     try:
         print(f"Checking trading hours at {datetime.now()}")
-        
-        target_tz = tz("Australia/Sydney")
-        curr_time = datetime.now().astimezone(target_tz)
+        curr_time = _get_curr_time()
     
         if curr_time.weekday() < 5:
             if curr_time.hour >= 10 and curr_time.hour <= 16:
@@ -94,6 +97,41 @@ def _inside_trading_hours() -> bool:
         print(f"Error encountered when checking trading hours: {e}")
     
     return True
+
+def reset_daily_announcements() -> None:
+    offset = 0
+    page_limit = 100
+    collected_all = False
+    all_items = []
+
+    while not collected_all:
+        try:
+            response = requests.get(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            params = {
+                "offset": offset
+            }
+        )
+            
+        except Exception as e:
+            print(f"Error uploading to webflow: {e}")
+
+        all_items.extend(response.json()["items"])
+        
+        if len(response.json()["items"]) < page_limit:
+            collected_all = True
+        else:
+            offset += page_limit
+            
+    if len(all_items) > 0:
+        for item in all_items:
+           delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
+           
+    print(f"Announcements successfully reset")
 
 def get_hash(file_path: str) -> str:
     try:
@@ -287,7 +325,6 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
     all_items = []
 
     while not collected_all:
-
         try:
             response = requests.get(
             f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
@@ -598,7 +635,7 @@ def validate_announcements(daily_log: dict) -> None:
                                     is_cash_flow = True if (("cash" in instance["heading"].lower()) or ("cashflow" in instance["heading"].lower())) else False
                                     is_substantial = True if "substantial" in instance["heading"].lower() else False
                                         
-                                    #push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
+                                    push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
                         
                                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
                                     if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
@@ -658,6 +695,13 @@ async def renew_announcements() -> None:
             print(f"Unexpected error encountered when polling ASX announcements: {e}")
     else:
         print(f"Outside trading hours, skipping ASX announcements")
+        
+        curr_time = _get_curr_time()
+        
+        if curr_time.hour() >= 23 and curr_time.minute() >= 30:
+            print(f"End of day, resetting announcements")
+            reset_daily_announcements()
+            
     
     await asyncio.sleep(120)
     asyncio.create_task(renew_announcements())
