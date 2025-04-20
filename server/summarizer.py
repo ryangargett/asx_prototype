@@ -13,7 +13,7 @@ from decouple import config
 from pypdf import PdfReader
 from webflow.client import Webflow
 
-from image_search import get_url_from_keyword
+#from image_search import get_url_from_keyword
 
 
 def suggest_image_kwords(company: str, title: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", user_prompt: Optional[str] = None) -> str:
@@ -226,8 +226,8 @@ if __name__ == "__main__":
     
     k_words = suggest_image_kwords(company, model = "o3-mini-2025-01-31", user_prompt = image_prompt)
     print(k_words)
-    url = get_url_from_keyword(k_words)
-    print(url)
+    #url = get_url_from_keyword(k_words)
+    #print(url)
     
     metadata = {
         "company": company,
