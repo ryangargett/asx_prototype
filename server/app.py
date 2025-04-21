@@ -108,11 +108,12 @@ def reset_daily_announcements() -> None:
     page_limit = 100
     collected_all = False
     all_items = []
+    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
 
     while not collected_all:
         try:
             response = requests.get(
-            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
             headers = {
                 "Authorization": "Bearer " + webflow_access_token,
                 "Content-Type": "application/json"
