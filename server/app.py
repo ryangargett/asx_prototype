@@ -90,7 +90,8 @@ def _get_curr_time():
 def _inside_trading_hours() -> bool:
     try:
         curr_time = _get_curr_time()
-        print(f"Checking trading hours at {curr_time} AEST")
+        curr_time_format = curr_time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"Checking trading hours at {curr_time_format} AEST")
         
         non_trading_dates = holidays.Australia(years=curr_time.year, observed=True)
     
@@ -676,8 +677,9 @@ def validate_announcements(daily_log: dict) -> None:
                 print("End of day or invalid header, skipping....")
                    
 async def renew_announcements() -> None:
-    
-    print(f"Reviewing new announcements at {datetime.now(timezone("Australia/Sydney"))} AEST")
+    curr_time = _get_curr_time()
+    curr_time_formatted = curr_time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Reviewing new announcements at {curr_time_formatted} AEST")
     
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
@@ -691,7 +693,7 @@ async def renew_announcements() -> None:
                 "https://quoteapi.com/files/rtw/asx_news_today.json", 
                 auth=(username, password)
             )
-            print(f"Polled at {datetime.now()}")
+            print(f"Polled at {curr_time_formatted} AEST")
             
             daily_announcements = list(daily_announcements.json())
             daily_announcements.reverse()
@@ -705,7 +707,7 @@ async def renew_announcements() -> None:
         curr_time = _get_curr_time()
         
         if curr_time.weekday() < 4: # Monday to Thursday, we keep announcements over the weekend
-            if curr_time.hour() >= 23 and curr_time.minute() >= 30:
+            if curr_time.hour >= 23 and curr_time.minute >= 30:
                 print(f"End of trading day, resetting announcements....")
                 reset_daily_announcements()
         else:
@@ -717,6 +719,9 @@ async def renew_announcements() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    
+    print("Starting FastAPI application...")
+    
     scheduler = AsyncIOScheduler(
         timezone = "Australia/Sydney"
     )
@@ -727,7 +732,7 @@ async def lifespan(app: FastAPI):
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
         hour="10-16",
-        minute="*/2'",
+        minute="*/2",
         max_instances=1
     )
     
