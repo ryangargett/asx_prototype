@@ -1,4 +1,5 @@
 import asyncio
+import holidays
 import mimetypes
 import os
 import json
@@ -24,6 +25,9 @@ import uvicorn
 import whisper
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.combining import AndTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
 import boto3 as b3
 from email_validator import validate_email, EmailNotValidError
 #from decouple import config
@@ -81,16 +85,16 @@ users.insert_one({"username": "admin",
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
 def _get_curr_time():
-    target_tz = tz("Australia/Sydney")
-    curr_time = datetime.now().astimezone(target_tz)
-    return curr_time
+    return datetime.now(tz("Australia/Sydney"))
 
 def _inside_trading_hours() -> bool:
     try:
-        print(f"Checking trading hours at {datetime.now()}")
         curr_time = _get_curr_time()
+        print(f"Checking trading hours at {curr_time} AEST")
+        
+        non_trading_dates = holidays.Australia(years=curr_time.year, observed=True)
     
-        if curr_time.weekday() < 5:
+        if curr_time.weekday() < 5 and curr_time.date() not in non_trading_dates:
             if curr_time.hour >= 10 and curr_time.hour <= 16:
                 return True
     except Exception as e:
@@ -673,7 +677,7 @@ def validate_announcements(daily_log: dict) -> None:
                    
 async def renew_announcements() -> None:
     
-    print(f"Reviewing new announcements at {datetime.now()}")
+    print(f"Reviewing new announcements at {datetime.now(timezone("Australia/Sydney"))} AEST")
     
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
@@ -713,10 +717,34 @@ async def renew_announcements() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Starting background task")
-    polling_task = asyncio.create_task(renew_announcements())
+    scheduler = AsyncIOScheduler(
+        timezone = "Australia/Sydney"
+    )
+    
+    # ASX Announcement polling (trading days only)
+    scheduler.add_job(
+        renew_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="10-16",
+        minute="*/2'",
+        max_instances=1
+    )
+    
+    # Daily reset (23:30 on trading days)
+    scheduler.add_job(
+        reset_daily_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu",
+        hour=23,
+        minute=30,
+        max_instances=1
+    )
+    
+    scheduler.start()
     yield
-    polling_task.cancel()
+    
+    scheduler.shutdown(wait=False)
 
 '''
 pwd_policy = PasswordPolicy.from_names(
