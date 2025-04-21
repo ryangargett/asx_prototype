@@ -696,13 +696,18 @@ async def renew_announcements() -> None:
             print(f"Polled at {curr_time_formatted} AEST")
             
             daily_announcements = list(daily_announcements.json())
-            daily_announcements.reverse()
-
-            await validate_announcements(daily_announcements)
+            
+            last_announcement = daily_announcements[-1]
+            if documents.find_one({"file_id": last_announcement["fileId"]}):
+                print(f"No new announcements found since last poll, skipping....")
+            else:
+                print(f"New announcements found, processing....")
+                daily_announcements.reverse()
+                await validate_announcements(daily_announcements)
         except Exception as e:
             print(f"Unexpected error encountered when polling ASX announcements: {e}")
     else:
-        print(f"Outside trading hours, skipping ASX announcements")
+        print(f"Outside trading hours, skipping process....")
         
         curr_time = _get_curr_time()
         
