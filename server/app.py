@@ -19,6 +19,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 from pydantic import BaseModel
+import pytz
 from pytz import timezone as tz
 
 import uvicorn
@@ -588,7 +589,13 @@ def push_article_to_site(file_path: str, announcement_hash: str, formatted_datet
 def _format_datetime(unformatted_datetime: str) -> str:
     try:
         dt = datetime.strptime(unformatted_datetime, '%d-%b-%Y %H:%M:%S')
-        formatted_datetime = dt.isoformat() # converts to acceptable webflow dt format
+        
+        # localize to proper timezone specified in the api (AWST)
+        api_local_tz = pytz.timezone('Australia/Perth')
+        dt_local = api_local_tz.localize(dt)
+        
+        dt_utc = dt_local.astimezone(pytz.UTC)
+        formatted_datetime = dt_utc.isoformat()
         return formatted_datetime
     except ValueError as e:
         print(f"Error parsing datetime string: {e}")
