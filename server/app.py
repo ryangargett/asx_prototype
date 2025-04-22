@@ -705,7 +705,7 @@ async def renew_announcements() -> None:
             
             daily_announcements = list(daily_announcements.json())
             
-            last_announcement = daily_announcements[-1]
+            last_announcement = daily_announcements[0]
             if documents.find_one({"file_id": last_announcement["fileId"]}):
                 print(f"No new announcements found since last poll, skipping....")
             else:
