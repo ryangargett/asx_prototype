@@ -64,7 +64,7 @@ db = client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
-documents = db["documents_new"]
+documents = db["documents_test"]
 #documents.delete_many({})
 stocks = db["stocks"]
 users.delete_many({})
@@ -537,33 +537,39 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
     
-    # Check if the article already exists in the site
-    article_id = await search_collection(collection_id, announcement_hash, "hash-value")
-    if article_id:
-        print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
-        return
-    
-    num_articles = _get_collection_size(collection_id)
-    if num_articles is not None and num_articles > max_articles:
-        print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
-        drop_oldest(collection_id)
+    try:
+        # Check if the article already exists in the site
+        article_id = await search_collection(collection_id, announcement_hash, "hash-value")
+        if article_id:
+            print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
+            return
         
-    stock_data = get_stock_data(ticker)
+        num_articles = _get_collection_size(collection_id)
+        if num_articles is not None and num_articles > max_articles:
+            print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
+            drop_oldest(collection_id)
+            
+        stock_data = get_stock_data(ticker)
 
-    # Concurrently generate content and search collections for relevant IDs
-    generated_content_task = generate_content(file_path, ticker)
-    sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-    industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-    industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
-    ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-    suggest_cover_image_task = get_cover_image(stock_data["industry"])
+        # Concurrently generate content and search collections for relevant IDs
+        generated_content_task = generate_content(file_path, ticker)
+        sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+        industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+        industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+        ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+        suggest_cover_image_task = get_cover_image(stock_data["industry"])
 
-    # Await all tasks concurrently
-    generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
-        generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
-    )
-    
-    print(stock_data)
+        # Await all tasks concurrently
+        generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
+            generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
+        )
+        
+        print(stock_data)
+        
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     print("Attempting webflow upload...")
 
@@ -688,11 +694,6 @@ async def process_announcement(announcement: dict) -> None:
             
     except Exception as e:
         print(f"Error validating announcement {announcement['fileId']}: {e}")
-
-    # ensure that temp file is deleted after processing even if exception is thrown 
-
-    if os.path.exists(f_name):
-        os.remove(f_name)
                    
 async def renew_announcements() -> None:
     curr_time = _get_curr_time()
