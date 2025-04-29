@@ -700,39 +700,33 @@ async def renew_announcements() -> None:
     
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
-    
-    if _inside_trading_hours():
         
-        print(f"Inside trading hours, polling ASX announcements")
+    try:
+        daily_announcements = requests.get(
+            "https://quoteapi.com/files/rtw/asx_news_today.json", 
+            auth=(username, password)
+        )
+        print(f"Polled at {curr_time_formatted} AEST")
         
-        try:
-            daily_announcements = requests.get(
-                "https://quoteapi.com/files/rtw/asx_news_today.json", 
-                auth=(username, password)
-            )
-            print(f"Polled at {curr_time_formatted} AEST")
+        daily_announcements = list(daily_announcements.json())
+        
+        last_announcement = daily_announcements[0]
+        if documents.find_one({"file_id": last_announcement["fileId"]}):
+            print(f"No new announcements found since last poll, skipping....")
+        else:
+            print(f"New announcements found, processing....")
+            daily_announcements.reverse()
             
-            daily_announcements = list(daily_announcements.json())
+            progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
-            last_announcement = daily_announcements[0]
-            if documents.find_one({"file_id": last_announcement["fileId"]}):
-                print(f"No new announcements found since last poll, skipping....")
-            else:
-                print(f"New announcements found, processing....")
-                daily_announcements.reverse()
-                
-                progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
-                
-                announcement_processing_tasks = []
-                for instance in daily_announcements:
-                    if instance.get("heading", "end of day").lower() != "end of day":
-                        announcement_processing_tasks.append(announcement_task_wrapper(instance, progress_bar))
-                
-                await tqdm_asyncio.gather(*announcement_processing_tasks)
-        except Exception as e:
-            print(f"Unexpected error encountered when polling ASX announcements: {e}")
-    else:
-        print(f"Outside trading hours, skipping process....")
+            announcement_processing_tasks = []
+            for instance in daily_announcements:
+                if instance.get("heading", "end of day").lower() != "end of day":
+                    announcement_processing_tasks.append(announcement_task_wrapper(instance, progress_bar))
+            
+            await tqdm_asyncio.gather(*announcement_processing_tasks)
+    except Exception as e:
+        print(f"Unexpected error encountered when polling ASX announcements: {e}")
         
         curr_time = _get_curr_time()
         
