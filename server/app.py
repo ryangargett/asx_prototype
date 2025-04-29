@@ -757,7 +757,7 @@ async def lifespan(app: FastAPI):
         renew_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="10-16",
+        hour="0-23",
         minute="*",
         max_instances=1
     )
