@@ -624,58 +624,53 @@ async def process_announcement(announcement: dict) -> None:
     generating article content, and pushing it to Webflow asynchronously.
     """
     
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/pdf,application/x-pdf,*/*",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
+    }
+    
     legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
     
     file_id = announcement.get("fileId", "")
     
     if not file_id:
-        print(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to missing fileId.")
+        print(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
         return
 
     f_name = f"./{file_id}.pdf"
 
-    # If the announcement does not exist, start downloading the file
-    try:
-        if announcement.get("documentURL", "N/A") != "N/A":
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'application/pdf,application/x-pdf,*/*',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive'
-            }
-            
-            # Download the document
-            response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
-            
-            with open(f_name, "wb") as f:
-                f.write(response.content)
-            
-            # Hash the file
-            announcement_hash = get_hash(f_name)
-            
-            # Check if the document already exists in the database
-            if not documents.find_one({"hash": announcement_hash}):
-                # Upload to S3
+    try: # check to see if document already exists in the database and is properly formed before downloading from API
+        if not documents.find_one({"hash": announcement_hash}):
+            if announcement.get("documentURL", "N/A") != "N/A":
+                response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
+                
+                with open(f_name, "wb") as f:
+                    f.write(response.content)
+                
+                announcement_hash = get_hash(f_name)
+                
                 try:
                     s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
                 except Exception as e:
                     print(f"Error uploading file to S3: {e}")
                     return
 
-                # Generate formatted datetime for use in the article
+                # generate formatted datetime for article stamp
                 formatted_datetime = _format_datetime(announcement["dateTime"])
         
                 is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
                 is_substantial = True if "substantial" in announcement["heading"].lower() else False
                     
                 push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
-    
+
                 #TODO: Improve filtering mechanism to avoid unnecessary uploads
                 if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
                     print("Discovered legal entry!")                                 
                     asyncio.create_task(
                         push_article_to_site(
-                            f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"]
+                            f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
                         )
                     )
             
@@ -691,6 +686,9 @@ async def process_announcement(announcement: dict) -> None:
                         "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
                     }
                 )
+                
+        else:
+            print(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
             
     except Exception as e:
         print(f"Error validating announcement {announcement['fileId']}: {e}")
