@@ -642,7 +642,7 @@ async def process_announcement(announcement: dict) -> None:
     f_name = f"./{file_id}.pdf"
 
     try: # check to see if document already exists in the database and is properly formed before downloading from API
-        if not documents.find_one({"hash": announcement_hash}):
+        if not documents.find_one({"fileId": file_id}):
             if announcement.get("documentURL", "N/A") != "N/A":
                 response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
                 
