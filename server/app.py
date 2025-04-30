@@ -113,6 +113,8 @@ def reset_daily_announcements() -> None:
     all_items = []
     announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
 
+    print("Beginning reset process....")
+
     while not collected_all:
         try:
             response = requests.get(
@@ -136,8 +138,10 @@ def reset_daily_announcements() -> None:
         else:
             offset += page_limit
             
+    print(f"Found {len(all_items)} announcements in collection {announcement_collection_id} to reset.")
+            
     if len(all_items) > 0:
-        for item in all_items:
+        for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
         print(f"ERROR: No announcements found in collection {collection_id} to reset")
@@ -760,7 +764,7 @@ async def lifespan(app: FastAPI):
         renew_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="0-23",
+        hour="7-19",
         minute="*",
         max_instances=1
     )
