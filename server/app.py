@@ -226,9 +226,6 @@ def get_stock_data(ticker: str) -> dict:
     
     details = stocks.find_one({"ticker": ticker})
     if details:
-        
-        print(details)
-        
         sector = details.get("sector", "N/A")
         
         if "oil & gas" in details.get("industry", "").lower():
@@ -330,7 +327,8 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
     except Exception as e:
         print(f"Error uploading to webflow: {e}")
 
-async def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
+
+def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
     offset = 0
     page_limit = 100
     collected_all = False
@@ -338,31 +336,33 @@ async def search_collection(collection_id: str, search_query: str, field: str = 
 
     while not collected_all:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
-                    headers={
-                        "Authorization": "Bearer " + webflow_access_token,
-                        "Content-Type": "application/json"
-                    },
-                    params={"offset": offset}
-                ) as response:
-                    response_data = await response.json()
-                    all_items.extend(response_data["items"])
-                    
-                    if len(response_data["items"]) < page_limit:
-                        collected_all = True
-                    else:
-                        offset += page_limit
+            response = requests.get(
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            headers = {
+                "Authorization": "Bearer " + webflow_access_token,
+                "Content-Type": "application/json"
+            },
+            params = {
+                "offset": offset
+            }
+        )
+            
         except Exception as e:
-            print(f"Error fetching collection: {e}")
-            return None
+            print(f"Error uploading to webflow: {e}")
 
+        all_items.extend(response.json()["items"])
+        
+        if len(response.json()["items"]) < page_limit:
+            collected_all = True
+        else:
+            offset += page_limit
+            
     item_id = None
-    for item in all_items:
-        if item["fieldData"][field] == search_query:
-            return item["id"]
-    
+    if len(all_items) > 0:
+        for item in all_items:
+            if item["fieldData"][field] == search_query:
+                return item["id"]
+        
     print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
     return item_id
         
@@ -389,7 +389,7 @@ def _get_url_from_bucket(bucket: str) -> str:
         
     return url
     
-async def get_cover_image(industry: str) -> str:
+def get_cover_image(industry: str) -> str:
 
     #TODO: Significantly expand this system
 
@@ -539,7 +539,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     
     try:
         # Check if the article already exists in the site
-        article_id = await search_collection(collection_id, announcement_hash, "hash-value")
+        article_id = search_collection(collection_id, announcement_hash, "hash-value")
         if article_id:
             print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
             return
@@ -551,6 +551,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             
         stock_data = get_stock_data(ticker)
 
+        '''
         # Concurrently generate content and search collections for relevant IDs
         generated_content_task = generate_content(file_path, ticker)
         sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
@@ -563,39 +564,47 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
             generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
         )
+        '''
         
-        print(stock_data)
+        generated = await generate_content(file_path, ticker)
+        sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+        industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+        ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+        cover_image = get_cover_image(stock_data["industry"])
+        
+        print("Attempting webflow upload...")
+
+        if generated and stock_data:
+            fieldData = {
+                "name": generated["short_title"],
+                "article-datetime": formatted_datetime,
+                "title": generated["long_title"],
+                "short-title": generated["short_title"],
+                "formal-title": formal_title,
+                "content": generated["content"],
+                "hash-value": announcement_hash,
+                "summary": generated["summary"],
+                "image-url": cover_image,
+                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
+                "article-sector": sector_id,
+                "article-industry": industry_id,
+                "article-ticker": ticker_id,
+                "article-industry-group": industry_group_id
+            }
+            
+            # Push the article to the collection
+            push_to_collection(collection_id, fieldData)
+            
+        else:
+            print("Error: malformed content or stock data, skipping upload...")
         
     finally:
         # Clean up the temporary file
         if os.path.exists(file_path):
             os.remove(file_path)
 
-    print("Attempting webflow upload...")
-
-    if generated and stock_data:
-        fieldData = {
-            "name": generated["short_title"],
-            "article-datetime": formatted_datetime,
-            "title": generated["long_title"],
-            "short-title": generated["short_title"],
-            "formal-title": formal_title,
-            "content": generated["content"],
-            "hash-value": announcement_hash,
-            "summary": generated["summary"],
-            "image-url": cover_image,
-            "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
-            "article-sector": sector_id,
-            "article-industry": industry_id,
-            "article-ticker": ticker_id,
-            "article-industry-group": industry_group_id
-        }
-        
-        # Push the article to the collection
-        push_to_collection(collection_id, fieldData)
-        
-    else:
-        print("Error: malformed content or stock data, skipping upload...")
+    
         
 def _format_datetime(unformatted_datetime: str) -> str:
     try:
@@ -642,50 +651,50 @@ async def process_announcement(announcement: dict) -> None:
     f_name = f"./{file_id}.pdf"
 
     try: # check to see if document already exists in the database and is properly formed before downloading from API
-        if not documents.find_one({"file_id": file_id}):
-            if announcement.get("documentURL", "N/A") != "N/A":
-                response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
-                
-                with open(f_name, "wb") as f:
-                    f.write(response.content)
-                
-                announcement_hash = get_hash(f_name)
-                
-                try:
-                    s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
-                except Exception as e:
-                    print(f"Error uploading file to S3: {e}")
-                    return
-
-                # generate formatted datetime for article stamp
-                formatted_datetime = _format_datetime(announcement["dateTime"])
-        
-                is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
-                is_substantial = True if "substantial" in announcement["heading"].lower() else False
-                    
-                push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
-
-                #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                    print("Discovered legal entry!")                                 
-                    asyncio.create_task(
-                        push_article_to_site(
-                            f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
-                        )
-                    )
+        if documents.find_one({"file_id": file_id}) is None:
+            response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
             
-                documents.insert_one(
-                    {
-                        "file_id": announcement["fileId"],
-                        "title": announcement["heading"],
-                        "hash": announcement_hash,
-                        "date_released": announcement["dateTime"],
-                        "price_sensitive": announcement["isSensitive"],
-                        "linked_ticker": announcement["code"],
-                        "news_types": announcement["newsTypes"],
-                        "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
-                    }
+            with open(f_name, "wb") as f:
+                f.write(response.content)
+            
+            announcement_hash = get_hash(f_name)
+            
+            '''
+            try:
+                s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
+            except Exception as e:
+                print(f"Error uploading file to S3: {e}")
+                return
+            '''
+            # generate formatted datetime for article stamp
+            formatted_datetime = _format_datetime(announcement["dateTime"])
+    
+            is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
+            is_substantial = True if "substantial" in announcement["heading"].lower() else False
+                
+            push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+
+            #TODO: Improve filtering mechanism to avoid unnecessary uploads
+            if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                print("Discovered legal entry!")                                 
+                asyncio.create_task(
+                    push_article_to_site(
+                        f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                    )
                 )
+        
+            documents.insert_one(
+                {
+                    "file_id": announcement["fileId"],
+                    "title": announcement["heading"],
+                    "hash": announcement_hash,
+                    "date_released": announcement["dateTime"],
+                    "price_sensitive": announcement["isSensitive"],
+                    "linked_ticker": announcement["code"],
+                    "news_types": announcement["newsTypes"],
+                    "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                }
+            )
                 
         else:
             print(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
@@ -706,10 +715,10 @@ async def renew_announcements() -> None:
             "https://quoteapi.com/files/rtw/asx_news_today.json", 
             auth=(username, password)
         )
+        
         print(f"Polled at {curr_time_formatted} AEST")
         
         daily_announcements = list(daily_announcements.json())
-        
         last_announcement = daily_announcements[0]
         if documents.find_one({"file_id": last_announcement["fileId"]}):
             print(f"No new announcements found since last poll, skipping....")
