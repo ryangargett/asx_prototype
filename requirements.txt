@@ -9,6 +9,7 @@ pydantic==2.10.3
 pydantic_core==2.27.1
 pymongo==4.10.1
 pypdf==5.1.0
+python-decouple==3.8.0
 python-dotenv==1.0.1
 pytz==2024.2
 regex==2024.11.6
