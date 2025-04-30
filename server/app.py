@@ -42,6 +42,7 @@ from pymongo import MongoClient
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 from tweepy import Client
+from unidecode import unidecode
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -550,6 +551,11 @@ def push_to_twitter(generated_content: dict, article_url: str) -> None:
     try:
         if generated_content and article_url:  
     
+            if len(generated_content["short_title"]) > 120:
+                generated_content["short_title"] = generated_content["short_title"][:130] + "..."
+
+            text = f"{generated_content['short_title']}\n\n{article_url}"
+
             twitter_client.create_tweet(
                 text = f"{generated_content['short_title']}\n\n{article_url}"
             )
@@ -557,6 +563,17 @@ def push_to_twitter(generated_content: dict, article_url: str) -> None:
             print("Error: Missing content or URL for tweet")
     except Exception as e:
         print(f"Unexpected error posting to Twitter: {e}")
+
+def _generate_slug(title: str, max_length: int = 80) -> str:
+    title_formatted = title.strip()
+    title_formatted = unidecode(title_formatted)
+    title_formatted = re.sub(r"\s+", " ", title_formatted)
+    slug = re.sub(r"[^a-z0-9]+", "-", title_formatted.lower()).strip("-")
+    
+    if len(slug) > max_length:
+        slug = slug[:max_length].rsplit("-", 1)[0]
+        
+    return slug
     
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
@@ -598,7 +615,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
         cover_image = get_cover_image(stock_data["industry"])
         
-        article_slug = generated["short_title"].replace(" ", "-").replace(":", "").lower()
+        article_slug = _generate_slug(generated["short_title"])
         
         print("Attempting webflow upload...")
 
@@ -624,7 +641,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             # Push the article to the collection
             push_to_collection(collection_id, fieldData)
             
-            push_to_twitter(generated, f"https://rockstocks.ai/articles/{article_slug}")
+            push_to_twitter(generated, f"https://www.rockstocks.ai/articles/{article_slug}")
             
         else:
             print("Error: malformed content or stock data, skipping upload...")
