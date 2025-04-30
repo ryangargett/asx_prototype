@@ -41,18 +41,21 @@ from PIL import Image
 from pymongo import MongoClient
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
+from tweepy import Client
 
+from dotenv import load_dotenv
+load_dotenv()
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
 #from image_search import get_url_from_keyword
 
 encrypter = CryptContext(schemes=["argon2"], deprecated="auto")
 
-client = MongoClient(os.getenv("MONGODB_KEY"))
+mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
 # Check if cluster is connected
 try:
-    client.admin.command('ping')
+    mongo_client.admin.command('ping')
     print("MongoDB connection: Successful")
 except Exception as e:
     print(f"MongoDB connection: Failed - {e}")
@@ -60,7 +63,7 @@ except Exception as e:
 access_token = os.getenv("WEBFLOW_API_KEY")
 collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
 
-db = client["main"]
+db = mongo_client["main"]
 users = db["users"]
 posts = db["posts"]
 profiles = db["profiles"]
@@ -78,12 +81,18 @@ try:
                         region_name="ap-southeast-2")
 except Exception as e:
     print(f"Error connecting to S3 bucket: {e}")
-'''
-users.insert_one({"username": "admin", 
-                  "email": "",
-                  "password": encrypter.hash("admin"),
-                  "elevation": "admin"})
-'''
+
+# check if twitter connection can be established
+try:
+    twitter_client = Client(
+        os.getenv("TWITTER_BEARER_TOKEN"),
+        os.getenv("TWITTER_API_KEY"),
+        os.getenv("TWITTER_API_SECRET"),
+        os.getenv("TWITTER_ACCESS_TOKEN"),
+        os.getenv("TWITTER_ACCESS_SECRET")
+    )
+except Exception as e:
+    print(f"Error connecting to Twitter API: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
@@ -537,6 +546,18 @@ def _get_industry_group(industry: str) -> str:
     else:
         return "Consumables" # default case]
     
+def push_to_twitter(generated_content: dict, article_url: str) -> None:
+    try:
+        if generated_content and article_url:  
+    
+            twitter_client.create_tweet(
+                text = f"{generated_content['short_title']}\n\n{article_url}"
+            )
+        else:
+            print("Error: Missing content or URL for tweet")
+    except Exception as e:
+        print(f"Unexpected error posting to Twitter: {e}")
+    
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
@@ -577,11 +598,14 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
         cover_image = get_cover_image(stock_data["industry"])
         
+        article_slug = generated["short_title"].replace(" ", "-").replace(":", "").lower()
+        
         print("Attempting webflow upload...")
 
         if generated and stock_data:
             fieldData = {
                 "name": generated["short_title"],
+                "slug": article_slug,
                 "article-datetime": formatted_datetime,
                 "title": generated["long_title"],
                 "short-title": generated["short_title"],
@@ -599,6 +623,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             
             # Push the article to the collection
             push_to_collection(collection_id, fieldData)
+            
+            push_to_twitter(generated, f"https://rockstocks.ai/articles/{article_slug}")
             
         else:
             print("Error: malformed content or stock data, skipping upload...")
