@@ -1,4 +1,5 @@
 import asyncio
+import holidays
 import mimetypes
 import os
 import json
@@ -18,12 +19,17 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 from pydantic import BaseModel
+import pytz
 from pytz import timezone as tz
 
+import aiohttp
 import uvicorn
 import whisper
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.combining import AndTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
 import boto3 as b3
 from email_validator import validate_email, EmailNotValidError
 #from decouple import config
@@ -34,10 +40,11 @@ from passlib.context import CryptContext
 from PIL import Image
 from pymongo import MongoClient
 from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
 
 
 from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
-from image_search import get_url_from_keyword
+#from image_search import get_url_from_keyword
 
 encrypter = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -81,33 +88,37 @@ users.insert_one({"username": "admin",
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
 def _get_curr_time():
-    target_tz = tz("Australia/Sydney")
-    curr_time = datetime.now().astimezone(target_tz)
-    return curr_time
+    return datetime.now(tz("Australia/Sydney"))
 
 def _inside_trading_hours() -> bool:
     try:
-        print(f"Checking trading hours at {datetime.now()}")
         curr_time = _get_curr_time()
+        curr_time_format = curr_time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"Checking trading hours at {curr_time_format} AEST")
+        
+        non_trading_dates = holidays.Australia(years=curr_time.year, observed=True)
     
-        if curr_time.weekday() < 5:
+        if curr_time.weekday() < 5 and curr_time.date() not in non_trading_dates:
             if curr_time.hour >= 10 and curr_time.hour <= 16:
                 return True
     except Exception as e:
         print(f"Error encountered when checking trading hours: {e}")
     
-    return True
+    return False
 
 def reset_daily_announcements() -> None:
     offset = 0
     page_limit = 100
     collected_all = False
     all_items = []
+    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
+
+    print("Beginning reset process....")
 
     while not collected_all:
         try:
             response = requests.get(
-            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+            f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
             headers = {
                 "Authorization": "Bearer " + webflow_access_token,
                 "Content-Type": "application/json"
@@ -127,8 +138,10 @@ def reset_daily_announcements() -> None:
         else:
             offset += page_limit
             
+    print(f"Found {len(all_items)} announcements in collection {announcement_collection_id} to reset.")
+            
     if len(all_items) > 0:
-        for item in all_items:
+        for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
         print(f"ERROR: No announcements found in collection {collection_id} to reset")
@@ -172,27 +185,28 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
         print(f"Error creating post from feed: {e}")
 '''
 
-def generate_content(file_path: str, ticker: str) -> dict:
+async def generate_content(file_path: str, ticker: str) -> dict:
     
     try:
         print("Reading document...")
         parsed_content = read_pdf(file_path)
-        print("Summarizing content...")
-        document_content = summarize_content(parsed_content, ticker)
-        print("Generated content: ", document_content)
-        print("Generating blurb...")
         
-        prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
-        summary = summarize_content(parsed_content, ticker, prompt = prompt)
+        summarize_task = summarize_content(parsed_content, ticker)
         
-        print("Generated summary: ", summary)
-        print("Suggesting title(s)...")
-        short_title, long_title = suggest_title(parsed_content, ticker)
-        print(f"Generated short title: {short_title}, Long title: {long_title}")
-        #print("Suggesting image keywords...")
-        #suggested_image_kwords = suggest_image_kwords(ticker, short_title)
-        #print(f"Generated kwords: {suggested_image_kwords}")
-        #print("Fetching image URL...")
+        summary_prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        
+        summary_task = summarize_content(parsed_content, ticker, prompt=summary_prompt)
+        title_task = suggest_title(parsed_content, ticker)
+        
+        document_content, summary, (short_title, long_title) = await asyncio.gather(
+            summarize_task, summary_task, title_task
+        )
+        
+        print(document_content)
+        print(summary)
+        print(short_title, long_title)
+        
+        print("Document processed successfully")
     except Exception as e:
         print(f"Error generating content: {e}")
     
@@ -216,9 +230,6 @@ def get_stock_data(ticker: str) -> dict:
     
     details = stocks.find_one({"ticker": ticker})
     if details:
-        
-        print(details)
-        
         sector = details.get("sector", "N/A")
         
         if "oil & gas" in details.get("industry", "").lower():
@@ -319,6 +330,7 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
             
     except Exception as e:
         print(f"Error uploading to webflow: {e}")
+
 
 def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
     offset = 0
@@ -523,40 +535,51 @@ def _get_industry_group(industry: str) -> str:
     elif industry in ["Logistics", "Packaging"]:
         return "Containers and Packaging"
     else:
-        return "Consumables" # default case
-def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
+        return "Consumables" # default case]
+    
+async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
     
-    # first check to see that the article does not already exist on site, this should be covered by the archive check step earlier but this is used as a backup
-
-    article_id = search_collection(collection_id, announcement_hash, "hash-value")
-    if article_id:
-        print(f"ERROR: Attempted publication failed due to prexisting article on website, skipping....")
-    else:
-    
+    try:
+        # Check if the article already exists in the site
+        article_id = search_collection(collection_id, announcement_hash, "hash-value")
+        if article_id:
+            print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
+            return
+        
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
             print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
             drop_oldest(collection_id)
-        
-        generated = generate_content(file_path, ticker)
+            
         stock_data = get_stock_data(ticker)
+
+        '''
+        # Concurrently generate content and search collections for relevant IDs
+        generated_content_task = generate_content(file_path, ticker)
+        sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+        industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+        industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+        ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+        suggest_cover_image_task = get_cover_image(stock_data["industry"])
+
+        # Await all tasks concurrently
+        generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
+            generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
+        )
+        '''
         
+        generated = await generate_content(file_path, ticker)
         sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
         industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
         industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
         ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-        
         cover_image = get_cover_image(stock_data["industry"])
         
-        print(stock_data)
-        
-        
         print("Attempting webflow upload...")
-        
+
         if generated and stock_data:
-        
             fieldData = {
                 "name": generated["short_title"],
                 "article-datetime": formatted_datetime,
@@ -574,149 +597,191 @@ def push_article_to_site(file_path: str, announcement_hash: str, formatted_datet
                 "article-industry-group": industry_group_id
             }
             
+            # Push the article to the collection
             push_to_collection(collection_id, fieldData)
             
         else:
             print("Error: malformed content or stock data, skipping upload...")
         
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    
+        
 def _format_datetime(unformatted_datetime: str) -> str:
     try:
         dt = datetime.strptime(unformatted_datetime, '%d-%b-%Y %H:%M:%S')
-        formatted_datetime = dt.isoformat() # converts to acceptable webflow dt format
+        
+        # localize to proper timezone specified in the api (AWST)
+        api_local_tz = pytz.timezone('Australia/Perth')
+        dt_local = api_local_tz.localize(dt)
+        
+        dt_utc = dt_local.astimezone(pytz.UTC)
+        formatted_datetime = dt_utc.isoformat()
         return formatted_datetime
     except ValueError as e:
         print(f"Error parsing datetime string: {e}")
+async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
+    try:
+        await process_announcement(announcement)
+    except Exception as e:
+        print(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
+    finally:
+        progress_bar.update(1)
 
-def validate_announcements(daily_log: dict) -> None:
+async def process_announcement(announcement: dict) -> None:
+    """
+    This function processes an individual announcement concurrently by validating,
+    generating article content, and pushing it to Webflow asynchronously.
+    """
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/pdf,application/x-pdf,*/*",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
+    }
     
     legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
     
-    with tqdm(total=len(daily_log), desc="Overall Progress", leave=True) as pbar:
-        for instance_idx, instance in enumerate(daily_log):
-            pbar.set_postfix_str(f"Processing announcement {instance_idx + 1} / {len(daily_log)} | {instance['dateTime']}")
-            pbar.update(1)
-        
-            if instance.get("heading", "end of day").lower() != "end of day":
-                
-                file_id = instance.get("fileId", "")
-                if file_id != "":
-                    f_name = f"./{file_id}.pdf"
-                
-                    try:
-                        existing_announcement = documents.find_one({"file_id": instance["fileId"]})
-                        if not existing_announcement:
+    file_id = announcement.get("fileId", "")
+    
+    if not file_id:
+        print(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        return
 
-                            if instance.get("documentURL", "N/A") != "N/A":
-                                headers = {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                                    'Accept': 'application/pdf,application/x-pdf,*/*',
-                                    'Accept-Encoding': 'gzip, deflate, br',
-                                    'Connection': 'keep-alive'
-                                }
-                                
-                                response = requests.get(instance["documentURL"], 
-                                                        headers = headers,
-                                                        auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
-                                
-                                with open(f_name, "wb") as f:
-                                    f.write(response.content)
-                                    
-                                hash = get_hash(f_name)
-                                
-                                if not documents.find_one({"hash": hash}):
-                                    try:
-                                        s3_client.upload_file(f_name, 
-                                                              "rtwasxreports", 
-                                                              f"{hash}.pdf",
-                                                              ExtraArgs={"ContentType": "application/pdf"})
-                                    except Exception as e:
-                                        print(f"Error uploading file to s3 bucket: {e}")
-                                        
-                                    formatted_datetime = _format_datetime(instance["dateTime"])
-                                    
-                                    is_cash_flow = True if (("cash" in instance["heading"].lower()) or ("cashflow" in instance["heading"].lower())) else False
-                                    is_substantial = True if "substantial" in instance["heading"].lower() else False
-                                        
-                                    push_announcement_to_site(hash, formatted_datetime, instance["code"], instance["heading"], instance["isSensitive"] == "Y", is_cash_flow, is_substantial)
-                        
-                                    #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                                    if instance.get("isSensitive", "N") == "Y" and instance.get("code", "") in legal_tickers:
-                                        print("Discovered legal entry!")                                 
-                                        push_article_to_site(f_name, hash, formatted_datetime, instance["code"], instance["heading"])
-                                
-                                    documents.insert_one(
-                                        {
-                                            "file_id": instance["fileId"],
-                                            "title": instance["heading"],
-                                            "hash": hash,
-                                            "date_released": instance["dateTime"],
-                                            "price_sensitive": instance["isSensitive"],
-                                            "linked_ticker": instance["code"],
-                                            "news_types": instance["newsTypes"],
-                                            "prev_ticker": instance["releaseCode"] if instance.get("releaseCode", "") != "" else "N/A",
-                                        }
-                                    )
-                                    
-                        
-                        else:
-                            print(f"Document already exists in collection, skipping...")
-                                
-                    except Exception as e:
-                        print(f"Error validating announcement {instance['fileId']}: {e}")
-                    
-                    # ensure that temp file is deleted after processing even if exception is thrown 
-                        
-                    if os.path.exists(f_name):
-                        os.remove(f_name)
-            else:
-                print("End of day or invalid header, skipping....")
+    f_name = f"./{file_id}.pdf"
+
+    try: # check to see if document already exists in the database and is properly formed before downloading from API
+        if documents.find_one({"file_id": file_id}) is None:
+            response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
+            
+            with open(f_name, "wb") as f:
+                f.write(response.content)
+            
+            announcement_hash = get_hash(f_name)
+            
+            try:
+                s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
+            except Exception as e:
+                print(f"Error uploading file to S3: {e}")
+                return
+            
+            # generate formatted datetime for article stamp
+            formatted_datetime = _format_datetime(announcement["dateTime"])
+    
+            is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
+            is_substantial = True if "substantial" in announcement["heading"].lower() else False
+                
+            push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+
+            #TODO: Improve filtering mechanism to avoid unnecessary uploads
+            if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                print("Discovered legal entry!")                                 
+                asyncio.create_task(
+                    push_article_to_site(
+                        f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                    )
+                )
+        
+            documents.insert_one(
+                {
+                    "file_id": announcement["fileId"],
+                    "title": announcement["heading"],
+                    "hash": announcement_hash,
+                    "date_released": announcement["dateTime"],
+                    "price_sensitive": announcement["isSensitive"],
+                    "linked_ticker": announcement["code"],
+                    "news_types": announcement["newsTypes"],
+                    "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                }
+            )
+                
+        else:
+            print(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+            
+    except Exception as e:
+        print(f"Error validating announcement {announcement['fileId']}: {e}")
                    
 async def renew_announcements() -> None:
-    
-    print(f"Reviewing new announcements at {datetime.now()}")
+    curr_time = _get_curr_time()
+    curr_time_formatted = curr_time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Reviewing new announcements at {curr_time_formatted} AEST")
     
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
-    
-    if _inside_trading_hours():
         
-        print(f"Inside trading hours, polling ASX announcements")
+    try:
+        daily_announcements = requests.get(
+            "https://quoteapi.com/files/rtw/asx_news_today.json", 
+            auth=(username, password)
+        )
         
-        try:
-            daily_announcements = requests.get(
-                "https://quoteapi.com/files/rtw/asx_news_today.json", 
-                auth=(username, password)
-            )
-            print(f"Polled at {datetime.now()}")
-            
-            daily_announcements = list(daily_announcements.json())
+        print(f"Polled at {curr_time_formatted} AEST")
+        
+        daily_announcements = list(daily_announcements.json())
+        last_announcement = daily_announcements[0]
+        if documents.find_one({"file_id": last_announcement["fileId"]}):
+            print(f"No new announcements found since last poll, skipping....")
+        else:
+            print(f"New announcements found, processing....")
             daily_announcements.reverse()
-
-            await validate_announcements(daily_announcements)
-        except Exception as e:
-            print(f"Unexpected error encountered when polling ASX announcements: {e}")
-    else:
-        print(f"Outside trading hours, skipping ASX announcements")
+            
+            progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
+            
+            announcement_processing_tasks = []
+            for instance in daily_announcements:
+                if instance.get("heading", "end of day").lower() != "end of day":
+                    announcement_processing_tasks.append(announcement_task_wrapper(instance, progress_bar))
+            
+            await tqdm_asyncio.gather(*announcement_processing_tasks)
+    except Exception as e:
+        print(f"Unexpected error encountered when polling ASX announcements: {e}")
         
         curr_time = _get_curr_time()
         
         if curr_time.weekday() < 4: # Monday to Thursday, we keep announcements over the weekend
-            if curr_time.hour() >= 23 and curr_time.minute() >= 30:
+            if curr_time.hour >= 23 and curr_time.minute >= 30:
                 print(f"End of trading day, resetting announcements....")
                 reset_daily_announcements()
         else:
             print(f"Day is not a trading day, skipping reset....")
-            
-    
-    await asyncio.sleep(120)
-    asyncio.create_task(renew_announcements())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Starting background task")
-    polling_task = asyncio.create_task(renew_announcements())
+    
+    print("Starting FastAPI application...")
+    
+    scheduler = AsyncIOScheduler(
+        timezone = "Australia/Sydney"
+    )
+    
+    # ASX Announcement polling (trading days only)
+    scheduler.add_job(
+        renew_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="7-19",
+        minute="*",
+        max_instances=1
+    )
+    
+    # Daily reset (23:30 on trading days)
+    scheduler.add_job(
+        reset_daily_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu",
+        hour=23,
+        minute=30,
+        max_instances=1
+    )
+    
+    scheduler.start()
     yield
-    polling_task.cancel()
+    
+    scheduler.shutdown(wait=False)
 
 '''
 pwd_policy = PasswordPolicy.from_names(

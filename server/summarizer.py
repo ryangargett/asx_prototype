@@ -57,7 +57,7 @@ def suggest_image_kwords(company: str, title: Optional[str] = "", model: Optiona
     suggested_image_kwords = response.choices[0].message.content
     return suggested_image_kwords
 
-def suggest_title(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", user_prompts: Optional[dict] = None) -> tuple[str]:
+async def suggest_title(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", user_prompts: Optional[dict] = None) -> tuple[str]:
     """Generates short and long form title for technical ASX company announcements using a configurable LLM endpoint (defaults to gpt-4o-m)
 
     Args:
@@ -71,7 +71,7 @@ def suggest_title(content: str, company: Optional[str] = "", model: Optional[str
         long_title (str): long form title 
     """    
     
-    client = openai.Client(api_key=config("OPENAI_KEY"))
+    client = openai.AsyncClient(api_key=config("OPENAI_KEY"))
     system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
     
     
@@ -87,7 +87,7 @@ def suggest_title(content: str, company: Optional[str] = "", model: Optional[str
                 "long": f"""Provide a suggested title for the article based on the provided announcement and ASX ticker. This title should include relevant technical indicators / statistics, the company name, and the main topic of the announcement. The title should be concise and informative. Do not include any punctuation or special characters in the title. \n\nEXAMPLES: \n- Warriedar Resources Reports Strong Antimony Recovery Results from Ricciardo Project \n- Great Boulder Resources Hits 8m @ 7.59g/t Au at Saltbush Prospect, Side Well Gold Project, Western Australia \n- Critical Resources Hits 34.9m @ 1.02% Li₂O at Mavis Lake Project, Ontario\n\nCOMPANY TICKER: {company}\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUGGESTED TITLE:""", 
             }
     
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -97,7 +97,7 @@ def suggest_title(content: str, company: Optional[str] = "", model: Optional[str
     
     short_title = response.choices[0].message.content
     
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -109,8 +109,8 @@ def suggest_title(content: str, company: Optional[str] = "", model: Optional[str
     
     return short_title.strip(), long_title.strip()
 
-def summarize_content(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", prompt: Optional[str] = None) -> dict:
-    client = openai.Client(api_key=config("OPENAI_KEY"))
+async def summarize_content(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", prompt: Optional[str] = None) -> dict:
+    client = openai.AsyncClient(api_key=config("OPENAI_KEY"))
     
     system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
     
@@ -154,7 +154,7 @@ def summarize_content(content: str, company: Optional[str] = "", model: Optional
     )
     '''
     
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
