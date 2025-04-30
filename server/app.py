@@ -663,13 +663,12 @@ async def process_announcement(announcement: dict) -> None:
             
             announcement_hash = get_hash(f_name)
             
-            '''
             try:
                 s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
             except Exception as e:
                 print(f"Error uploading file to S3: {e}")
                 return
-            '''
+            
             # generate formatted datetime for article stamp
             formatted_datetime = _format_datetime(announcement["dateTime"])
     
