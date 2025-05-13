@@ -1,7 +1,5 @@
 import os
-import random
-import time
-import requests
+import json
 
 import pandas as pd
 import regex as re
@@ -9,6 +7,7 @@ import regex as re
 from pymongo import MongoClient
 from scraperapi_sdk import ScraperAPIClient
 from collections import Counter
+from tqdm import tqdm
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
@@ -20,7 +19,8 @@ except Exception as e:
     print(f"MongoDB connection: Failed - {e}")
     
 db = mongo_client["main"]
-stocks = db["stocks"]
+stocks = db["stocks_new"]
+#stocks.delete_many({}) # delete all stocks in the collection to ensure no duplicates are present
     
 scraper_client = ScraperAPIClient("ef892f62cf4c6c90385d2b5ef59281fe")
 '''
@@ -110,10 +110,6 @@ def get_company_info(ticker):
         "cookie": "GUC=AQEBCAFn42toC0IfQASM&s=AQAAAJmX2cB-&g=Z-IiRA; A1=d=AQABBNCHQGcCEFM4R265BmtvGc7pW9YLLEwFEgEBCAFr42cLaA0CxyMA_eMBAAcI0IdAZ9YLLEw&S=AQAAAsDj1lFDSpaDKmRVAeHcM4I; A3=d=AQABBNCHQGcCEFM4R265BmtvGc7pW9YLLEwFEgEBCAFr42cLaA0CxyMA_eMBAAcI0IdAZ9YLLEw&S=AQAAAsDj1lFDSpaDKmRVAeHcM4I; A1S=d=AQABBNCHQGcCEFM4R265BmtvGc7pW9YLLEwFEgEBCAFr42cLaA0CxyMA_eMBAAcI0IdAZ9YLLEw&S=AQAAAsDj1lFDSpaDKmRVAeHcM4I; PRF=t%3DBHP.AX%252B29M.AX%252BNST.AX"
     }
     
-    delay = random.uniform(0, 20)
-    print(f"Sleeping for {delay:.3f} seconds")
-    time.sleep(delay)
-    
     try:
         response = scraper_client.get(url=f"https://finance.yahoo.com/quote/{ticker}?p={ticker}",
                                   headers=headers)
@@ -127,16 +123,16 @@ def get_company_info(ticker):
     info_match = re.search(info_pattern, response)
     if info_match:
         summary = info_match.group(1)
-        print(f"\n{summary}")
+        tqdm.write(f"\n{summary}")
     else:
-        print(f"\nNo valid summary")
+        tqdm.write(f"\nNo valid summary")
         
     industry_match = re.search(industry_pattern, response)
     if industry_match:
         industry = industry_match.group(1)
-        print(f"\n{industry}")
+        tqdm.write(f"\n{industry}")
     else:
-        print(f"\nNo valid industry")
+        tqdm.write(f"\nNo valid industry")
 
     if not info_match or not industry_match:
         return None
@@ -146,14 +142,36 @@ def get_company_info(ticker):
             "summary": summary,
             "industry": industry
         }
+        
+def _format_ticker(ticker: str) -> str:
+    ticker_components = ticker.strip().split(":")
+    formatted_ticker = ticker_components[1].strip() + ".AX"
+    return formatted_ticker
+
+def _format_company_name(name: str) -> str:
+    name_components = name.strip().split("(")
+    return(name_components[0].strip())
     
-def filter_by_sector(file_path: str) -> pd.DataFrame:
+def format_company_listing(file_path: str) -> pd.DataFrame:
     
-    full_data = pd.read_csv(file_path, header=0)
-    valid_sectors = ["materials", "energy"]
-    filtered_data = full_data[full_data["sector"].str.lower().isin(valid_sectors)]
-    filtered_data.to_csv("./server/filtered_asx_companies.csv")
-    return filtered_data
+    company_data = pd.read_csv(
+        file_path, 
+        header = 0,
+        names = ["ticker", "name", "website", "cap", "last trade", "change", "change %", "sector"]
+    )
+    
+    print(company_data.head())
+    
+    company_data["ticker"] = company_data["ticker"].apply(_format_ticker)
+    company_data["name"] = company_data["name"].apply(_format_company_name)
+    company_data = company_data[company_data["sector"].str.lower() != "unclassified"] # drop any ETFs or otherwise unclassified companies
+    company_data.sort_values(by = "ticker", inplace = True)
+    
+    #valid_sectors = ["materials", "energy"]
+    #filtered_data = full_data[full_data["sector"].str.lower().isin(valid_sectors)]
+    
+    company_data.to_csv("./server/data/asx_companies.csv")
+    return company_data
     
 def get_energy_sector_industries():
     """
@@ -207,47 +225,44 @@ def get_tickers_by_sector_and_industry(sector: str, industry: str) -> list:
         print(f"Error while fetching tickers for sector '{sector}' and industry '{industry}': {e}")
         return []
 
-    
-if __name__ == "__main__":
-    
+def consolidate_industries() -> None:
+    for industry in stocks.distinct("industry"):
+        industry = industry.strip().replace("\u2014", " - ")
+
+def update_company_details() -> None:
+        
     access_token = os.getenv("WEBFLOW_API_KEY")
     collection_id = "67e8ae8d2f21aadc762733b1"
     
-    """
     failed_tickers = []
-    incorrect_sector_tickers = []
     num_failed = 0
-    num_incorrect = 0
     
-    if not os.path.exists("./server/filtered_asx_companies.csv"):
-        filtered_data = filter_by_sector("./asx_companies.csv")
+    if not os.path.exists("./server/data/asx_companies.csv"):
+        filtered_data = format_company_listing("./server/data/company_list.csv")
     else:
-        filtered_data = pd.read_csv("./server/filtered_asx_companies.csv")
+        filtered_data = pd.read_csv("./server/data/asx_companies.csv")
         
-    for row in filtered_data.itertuples():
-        ticker = row.ticker + ".AX"
-        print("\n" + f"="*10)
-        print(f"Processing {ticker}")
+    for row in tqdm(filtered_data.itertuples(), desc="Processing tickers", total=len(filtered_data)):
+        ticker = row.ticker.strip()
+        tqdm.write("\n" + f"="*10)
+        tqdm.write(f"Processing {ticker}")
         
         if stocks.find_one({"ticker": ticker}):
-            print(f"Skipped {ticker} as it already exists in the database")
+            tqdm.write(f"Skipped {ticker} as it already exists in the database")
         else:
             company_info = get_company_info(ticker)
             
             if company_info is not None:
-                if company_info["sector"] not in ["materials", "energy"]:
-                    incorrect_sector_tickers.append(ticker)
-                    print(f"Skipped {ticker} due to incorrect sector")
-                    num_incorrect += 1
-                else:
-                    stocks.insert_one({
-                        "ticker": ticker,
-                        "company_name": row.name,
-                        "summary": company_info["summary"],
-                        "sector": row.sector,
-                        "industry": company_info["industry"]
-                    })
-                    print(f"Successfully inserted {ticker}")
+                stocks.insert_one({
+                    "ticker": ticker,
+                    "company_name": row.name,
+                    "summary": company_info["summary"],
+                    "website": row.website,
+                    "cap": row.cap,
+                    "sector": row.sector,
+                    "industry": company_info["industry"]
+                })
+                print(f"Successfully inserted {ticker}")
             else:
                 print(f"Skipped {ticker} due to invalid data")
                 num_failed += 1
@@ -255,17 +270,29 @@ if __name__ == "__main__":
             
     print(f"Failed to insert {num_failed} companies out of {len(filtered_data)} due to missing data")
     print(f"Failed tickers: {failed_tickers}")
+if __name__ == "__main__":
     
-    print(f"Skipped {num_incorrect} companies due to incorrect sector")
-    print(f"Incorrect sector tickers: {incorrect_sector_tickers}")
+    #update_company_details()
+    consolidate_industries()
+    
+    unique_sectors = stocks.distinct("sector")
+    print(f"Num unique sectors in the database: {len(unique_sectors)}")
+    print(f"Unique sectors: {unique_sectors}")
+    
+    unique_industries = stocks.distinct("industry")
+    print(f"Num unique sectors in the database: {len(unique_industries)}")
+    unique_industries.sort()
+    
+    with open("./server/data/unique_industries.json", "w") as f:
+        json.dump(unique_industries, f, indent=4)
     
     #get_company_info()
     
-    get_energy_sector_industries()
-    get_tickers_by_sector_and_industry("Energy", "Specialty Business Services")
-    get_tickers_by_sector_and_industry("Materials", "Copper")
-    """
+    #get_energy_sector_industries()
+    #get_tickers_by_sector_and_industry("Energy", "Specialty Business Services")
+    #et_tickers_by_sector_and_industry("Materials", "Copper")
     
+    '''
     legal_stocks_energy = [
     "AEE", "AEL", "AGE", "ALD", "BKY", "BMN", "BOE", "BPT", "COI", "CRD",
     "CVN", "DYL", "EEG", "ERA", "HZN", "KAR", "LOT", "NHC", "NXG", "OMA",
@@ -340,3 +367,4 @@ if __name__ == "__main__":
                 
         except Exception as e:
             print(f"Error uploading to webflow: {e}")
+            '''
