@@ -1,43 +1,21 @@
 import asyncio
 import holidays
-import mimetypes
 import os
-import json
+import pytz
 import random
 import regex as re
 import requests
-import shutil
-import time
-import uuid
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from hashlib import sha256
-from fastapi import FastAPI, HTTPException, Depends, Response, Request, UploadFile, File, Form, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.staticfiles import StaticFiles
-from io import BytesIO
-from pydantic import BaseModel
-import pytz
 from pytz import timezone as tz
 
-import aiohttp
 import uvicorn
-import whisper
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.combining import AndTrigger
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.cron import CronTrigger
 import boto3 as b3
-from email_validator import validate_email, EmailNotValidError
-#from decouple import config
-from jose import jwt, JWTError
-from markdown import markdown
-from password_strength import PasswordPolicy
-from passlib.context import CryptContext
-from PIL import Image
+from fastapi import FastAPI
 from pymongo import MongoClient
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
@@ -47,10 +25,8 @@ from unidecode import unidecode
 from dotenv import load_dotenv
 load_dotenv()
 
-from summarizer import read_pdf, summarize_content, suggest_title, suggest_image_kwords
+from summarizer import read_pdf, summarize_content, suggest_title
 #from image_search import get_url_from_keyword
-
-encrypter = CryptContext(schemes=["argon2"], deprecated="auto")
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
@@ -65,14 +41,8 @@ access_token = os.getenv("WEBFLOW_API_KEY")
 collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
 
 db = mongo_client["main"]
-users = db["users"]
-posts = db["posts"]
-profiles = db["profiles"]
 documents = db["documents_new"]
-#documents.delete_many({})
 stocks = db["stocks"]
-users.delete_many({})
-posts.delete_many({})
 
 # check if s3 connection can be established
 try:
