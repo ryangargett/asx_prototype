@@ -226,8 +226,55 @@ def get_tickers_by_sector_and_industry(sector: str, industry: str) -> list:
         return []
 
 def consolidate_industries() -> None:
+    
+    industries = []
+    
     for industry in stocks.distinct("industry"):
-        industry = industry.strip().replace("\u2014", " - ")
+        old_industry = industry.strip().replace("\u2014", " - ").lower()
+        industry_components = old_industry.split(" - ")
+        if len(industry_components) > 1:
+            root_industry, sub_industry = industry_components[0].strip(), industry_components[1].strip()
+            
+            if root_industry == "beverages":
+                if "brewers" in sub_industry.lower():
+                    consolidated_industry = "Breweries"
+                elif "wineries" in sub_industry.lower():
+                    consolidated_industry = "Wineries and Distilleries"
+            elif root_industry == "drug manufacturers":
+                if "generic" in sub_industry.lower():
+                    consolidated_industry = "Generic Pharmaceuticals"
+                elif "specialty" in sub_industry.lower():
+                    consolidated_industry = "Specialty Pharmaceuticals"
+            elif root_industry == "reit":
+                if "healthcare" in sub_industry.lower():
+                    consolidated_industry = "Healthcare REIT"
+            elif root_industry == "software":
+                if "infrastructure" in sub_industry.lower():
+                    consolidated_industry = "Systems Software"
+            elif root_industry == "utilities":
+                if "electric" in sub_industry.lower():
+                    consolidated_industry = "Electrical Utilities"
+                elif "independent power producers" in sub_industry.lower():
+                    consolidated_industry = "Independent Power Producers"
+                elif "water" in sub_industry.lower():
+                    consolidated_industry = "Water Utilities"    
+            else:
+                consolidated_industry = " ".join([sub_industry.capitalize(), " ".join([part.capitalize() for part in root_industry.split()])]).strip()
+        else:
+            if "oil & gas" in industry.lower():
+                consolidated_industry = "Oil & Gas"
+            elif "coal" in industry.lower():
+                consolidated_industry = "Coal"
+            else:
+                consolidated_industry = industry
+                
+        industries.append(consolidated_industry)
+        
+    unique_industries = sorted(set(industries))
+    print(f"Num unique industries in the database: {len(unique_industries)}")
+
+    with open("./server/data/unique_industries_consolidated.json", "w") as f:
+        json.dump(unique_industries, f, indent=4)
 
 def update_company_details() -> None:
         
