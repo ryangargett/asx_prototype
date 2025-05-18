@@ -43,6 +43,7 @@ collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
 db = mongo_client["main"]
 documents = db["documents_new"]
 stocks = db["stocks"]
+articles = db["articles"]
 
 # check if s3 connection can be established
 try:
@@ -174,12 +175,14 @@ async def generate_content(file_path: str, ticker: str) -> dict:
         summarize_task = summarize_content(parsed_content, ticker)
         
         summary_prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        email_summary_prompt = f"Provide a short (maximum 40 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a email newsletter towards beginner traders. This summary cannot include the ASX ticker OR company name in any way, assume this is already included in the newsletter headline. (for example Announced an initial tungsten resource at its Hillgrove Project instead of Larvotto Resources Limited announced an initial tungsten resource at its Hillgrove Project).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         
         summary_task = summarize_content(parsed_content, ticker, prompt=summary_prompt)
+        email_summary_task = summarize_content(parsed_content, ticker, prompt=email_summary_prompt)
         title_task = suggest_title(parsed_content, ticker)
         
-        document_content, summary, (short_title, long_title) = await asyncio.gather(
-            summarize_task, summary_task, title_task
+        document_content, summary, email_summary, (short_title, long_title) = await asyncio.gather(
+            summarize_task, summary_task, email_summary_task, title_task
         )
         
         print(document_content)
@@ -194,7 +197,8 @@ async def generate_content(file_path: str, ticker: str) -> dict:
         "short_title": short_title,
         "long_title": long_title,
         "content": document_content,
-        "summary": summary
+        "summary": summary,
+        "email_summary": email_summary
     }
     
     return content
@@ -211,51 +215,13 @@ def get_stock_data(ticker: str) -> dict:
     details = stocks.find_one({"ticker": ticker})
     if details:
         sector = details.get("sector", "N/A")
-        
-        if "oil & gas" in details.get("industry", "").lower():
-            industry = "Oil & Gas"
-        elif "industrial metals" in details.get("industry", "").lower():
-            industry = "Industrial Metals"
-        elif "precious metals" in details.get("industry", "").lower():
-            industry = "Precious Metals"
-        elif "lumber" in details.get("industry", "").lower():
-            industry = "Lumber"
-        elif "packaging" in details.get("industry", "").lower():
-            industry = "Packaging"
-        elif "machinery" in details.get("industry", "").lower():
-            industry = "Heavy Machinery"
-        elif "construction" in details.get("industry", "").lower():
-            industry = "Construction"
-        elif re.search(r"chemical*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Chemicals"
-        elif re.search(r"biotech*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Biotech"
-        elif "freight" in details.get("industry", "").lower():
-            industry = "Logistics"
-        elif re.search(r"agricultu*|farm*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Agriculture"
-        elif "silver" in details.get("industry", "").lower():
-            industry = "Silver"
-        elif "uranium" in details.get("industry", "").lower():
-            industry = "Uranium"
-        elif "coal" in details.get("industry", "").lower():
-            industry = "Coal"
-        elif "copper" in details.get("industry", "").lower():
-            industry = "Copper"
-        elif "gold" in details.get("industry", "").lower():
-            industry = "Gold"
-        elif "steel" in details.get("industry", "").lower():
-            industry = "Steel"
-        elif "aluminum" in details.get("industry", "").lower():
-            industry = "Aluminum"
-        elif re.search(r"renewable*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Renewables"        
-        else:
-            industry = "Other"
+        industry = details.get("industry", "N/A")
+        industry_group = details.get("industry_group", "N/A")
         
         return {
             "sector": sector,
-            "industry": industry
+            "industry": industry,
+            "industry_group": industry_group
         }
     
     return stock_data
@@ -424,6 +390,8 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     else:
         item_colour = "#FFFFFF"
     
+    company_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+    
     fieldData = {
         "name": hash,
         "announcement-datetime": datetime,
@@ -499,6 +467,7 @@ def drop_oldest(collection_id: str) -> None:
     
     delete_item(collection_id, oldest_item_id)
     
+'''
 def _get_industry_group(industry: str) -> str:
     if industry in ["Aluminum", "Copper", "Gold", "Industrial Metals", "Precious Metals", "Silver", "Steel"]:
         return "Metals and Mining"
@@ -516,6 +485,7 @@ def _get_industry_group(industry: str) -> str:
         return "Containers and Packaging"
     else:
         return "Consumables" # default case]
+'''
     
 def push_to_twitter(generated_content: dict, article_url: str) -> None:
     try:
@@ -544,6 +514,14 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         slug = slug[:max_length].rsplit("-", 1)[0]
         
     return slug
+
+def collect_for_email(article_title: str, article_summary: str, article_image: str, url: str) -> None:
+    articles.insert_one({
+        "title": article_title,
+        "summary": article_summary,
+        "image": article_image,
+        "url": url
+    })
     
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
@@ -581,11 +559,12 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         generated = await generate_content(file_path, ticker)
         sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
         industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), stock_data["industry_group"])
         ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
         cover_image = get_cover_image(stock_data["industry"])
         
         article_slug = _generate_slug(generated["short_title"])
+        article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
         
         print("Attempting webflow upload...")
 
@@ -610,8 +589,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             
             # Push the article to the collection
             push_to_collection(collection_id, fieldData)
-            
-            push_to_twitter(generated, f"https://www.rockstocks.ai/articles/{article_slug}")
+            push_to_twitter(generated, article_url)
+            collect_for_email(generated["summary"], article_url)
             
         else:
             print("Error: malformed content or stock data, skipping upload...")
