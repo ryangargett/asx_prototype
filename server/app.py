@@ -1,5 +1,6 @@
 import asyncio
 import holidays
+import json
 import os
 import pytz
 import random
@@ -43,6 +44,9 @@ collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
 db = mongo_client["main"]
 documents = db["documents_new"]
 stocks = db["stocks"]
+articles = db["articles"]
+
+missing_stocks = []
 
 # check if s3 connection can be established
 try:
@@ -66,6 +70,61 @@ except Exception as e:
     print(f"Error connecting to Twitter API: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
+
+def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
+    
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached_collection = json.load(f)
+    
+    else:
+        
+        offset = 0
+        page_limit = 100
+        collected_all = False
+        cached_items = {}
+
+        print("Beginning collection process....")
+
+        while not collected_all:
+            try:
+                response = requests.get(
+                f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+                headers = {
+                    "Authorization": "Bearer " + access_token,
+                    "Content-Type": "application/json"
+                },
+                params = {
+                    "offset": offset
+                }
+            )
+                
+                items = response.json()["items"]
+
+                for item in items:
+                    if key_field == "id":
+                        entry = item["id"]
+                    else:
+                        entry = item["fieldData"][key_field]
+                        
+                    cached_items[entry] = item
+
+                if len(items) < page_limit:
+                    collected_all = True
+                else:
+                    offset += page_limit
+            except Exception as e:
+                print(f"Error uploading to webflow: {e}")
+        
+        cached_collection = dict(sorted(cached_items.items()))
+        
+        with open(cache_path, "w") as f:
+            json.dump(cached_collection, f, indent = 4)
+        
+    return cached_collection
+
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -124,7 +183,7 @@ def reset_daily_announcements() -> None:
         for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
-        print(f"ERROR: No announcements found in collection {collection_id} to reset")
+        tqdm.write(f"ERROR: No announcements found in collection {collection_id} to reset")
            
     print(f"Announcements successfully reset")
 
@@ -134,7 +193,7 @@ def get_hash(file_path: str) -> str:
             hash = sha256(f.read()).hexdigest()
         return hash
     except Exception as e:
-        print(f"Error hashing file: {e}")
+        tqdm.write(f"Error hashing file: {e}")
         return ""
     
 '''
@@ -168,97 +227,54 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
 async def generate_content(file_path: str, ticker: str) -> dict:
     
     try:
-        print("Reading document...")
         parsed_content = read_pdf(file_path)
         
         summarize_task = summarize_content(parsed_content, ticker)
         
         summary_prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        email_summary_prompt = f"Provide a short (maximum 40 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a email newsletter towards beginner traders. This summary cannot include the ASX ticker OR company name in any way, assume this is already included in the newsletter headline. (for example Announced an initial tungsten resource at its Hillgrove Project instead of Larvotto Resources Limited announced an initial tungsten resource at its Hillgrove Project).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         
         summary_task = summarize_content(parsed_content, ticker, prompt=summary_prompt)
+        email_summary_task = summarize_content(parsed_content, ticker, prompt=email_summary_prompt)
         title_task = suggest_title(parsed_content, ticker)
         
-        document_content, summary, (short_title, long_title) = await asyncio.gather(
-            summarize_task, summary_task, title_task
+        document_content, summary, email_summary, (short_title, long_title) = await asyncio.gather(
+            summarize_task, summary_task, email_summary_task, title_task
         )
         
-        print(document_content)
-        print(summary)
-        print(short_title, long_title)
+        tqdm.write(document_content)
+        tqdm.write(summary)
+        tqdm.write(short_title, long_title)
         
-        print("Document processed successfully")
+        tqdm.write("Document processed successfully")
     except Exception as e:
-        print(f"Error generating content: {e}")
+        tqdm.write(f"Error generating content: {e}")
     
     content =  {
         "short_title": short_title,
         "long_title": long_title,
         "content": document_content,
-        "summary": summary
+        "summary": summary,
+        "email_summary": email_summary
     }
     
     return content
 
 def get_stock_data(ticker: str) -> dict:
-    stock_data = None
-    
-    ticker_elements = ticker.split(":")
-    if len(ticker_elements) > 1:
-        ticker = ticker_elements[1] + ".AX"
-    else:
-        ticker = ticker + ".AX"
-    
-    details = stocks.find_one({"ticker": ticker})
-    if details:
-        sector = details.get("sector", "N/A")
+
+    entry = all_stocks.get(ticker, None)
+    if entry:
+        details = entry["fieldData"]
         
-        if "oil & gas" in details.get("industry", "").lower():
-            industry = "Oil & Gas"
-        elif "industrial metals" in details.get("industry", "").lower():
-            industry = "Industrial Metals"
-        elif "precious metals" in details.get("industry", "").lower():
-            industry = "Precious Metals"
-        elif "lumber" in details.get("industry", "").lower():
-            industry = "Lumber"
-        elif "packaging" in details.get("industry", "").lower():
-            industry = "Packaging"
-        elif "machinery" in details.get("industry", "").lower():
-            industry = "Heavy Machinery"
-        elif "construction" in details.get("industry", "").lower():
-            industry = "Construction"
-        elif re.search(r"chemical*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Chemicals"
-        elif re.search(r"biotech*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Biotech"
-        elif "freight" in details.get("industry", "").lower():
-            industry = "Logistics"
-        elif re.search(r"agricultu*|farm*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Agriculture"
-        elif "silver" in details.get("industry", "").lower():
-            industry = "Silver"
-        elif "uranium" in details.get("industry", "").lower():
-            industry = "Uranium"
-        elif "coal" in details.get("industry", "").lower():
-            industry = "Coal"
-        elif "copper" in details.get("industry", "").lower():
-            industry = "Copper"
-        elif "gold" in details.get("industry", "").lower():
-            industry = "Gold"
-        elif "steel" in details.get("industry", "").lower():
-            industry = "Steel"
-        elif "aluminum" in details.get("industry", "").lower():
-            industry = "Aluminum"
-        elif re.search(r"renewable*", details.get("industry", ""), re.IGNORECASE):
-            industry = "Renewables"        
-        else:
-            industry = "Other"
+        sector = details["company-sector"]
+        industry = details["company-industry"]
+        industry_group = details["company-industry-group"]
         
         return {
             "sector": sector,
-            "industry": industry
+            "industry": industry,
+            "industry_group": industry_group
         }
-    
-    return stock_data
 
 def _get_collection_size(collection_id: str) -> int:
     offset = 0
@@ -281,7 +297,7 @@ def _get_collection_size(collection_id: str) -> int:
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -305,14 +321,12 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
                 "fieldData": payload
             }
         )
-        
-        print(response.json())
             
     except Exception as e:
-        print(f"Error uploading to webflow: {e}")
+        tqdm.write(f"Error uploading to webflow: {e}")
 
 
-def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
+def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
     offset = 0
     page_limit = 100
     collected_all = False
@@ -332,7 +346,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -346,8 +360,8 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
         for item in all_items:
             if item["fieldData"][field] == search_query:
                 return item["id"]
-        
-    print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
+    if suppress_warning is False:   
+        tqdm.write(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
     return item_id
         
 
@@ -366,44 +380,45 @@ def _get_url_from_bucket(bucket: str) -> str:
         random_image = random.choice(images)
         image_key = random_image["Key"]
         url = f"https://rtwimages.s3.ap-southeast-2.amazonaws.com/{image_key}"
-        
-        print(f"Image URL: {url}")
     except Exception as e:
-        print(f"Error fetching image URL from bucket: {e}, using default....")
+        tqdm.write(f"Error fetching image URL from bucket: {e}, using default....")
         
     return url
     
-def get_cover_image(industry: str) -> str:
+def get_cover_image(industry_id: str) -> str:
+    
+    industry = all_industries[industry_id]["fieldData"]["name"]
+    industry = industry.lower().strip()
 
     #TODO: Significantly expand this system
 
-    if "oil & gas" in industry.lower():
+    if "oil & gas" in industry:
         bucket = "oilandgas"
-    elif "renewable" in industry.lower():
+    elif "renewable" in industry:
         bucket = "renewables"
-    elif "uranium" in industry.lower():
+    elif "uranium" in industry:
         bucket = "nuclear"
-    elif "chemical" in industry.lower():
+    elif "chemical" in industry:
         bucket = "chemicals"
-    elif "coal" in industry.lower():
+    elif "coal" in industry:
         bucket = "coal"
-    elif "lumber" in industry.lower():
+    elif "lumber" in industry:
         bucket = "lumber"
-    elif "packaging" in industry.lower():
+    elif "packaging" in industry:
         bucket = "packaging"
-    elif "gold" in industry.lower():
+    elif "gold" in industry:
         bucket = "gold"
-    elif "steel" in industry.lower():
+    elif "steel" in industry:
         bucket = "steel"
-    elif "agriculture" in industry.lower():
+    elif "agricultur" in industry:
         bucket = "agriculture"
-    elif "construction" in industry.lower():
+    elif "construction" in industry:
         bucket = "construction"
-    elif "biotech" in industry.lower():
+    elif "biotech" in industry:
         bucket = "biotech"
-    elif "logistics" in industry.lower():
+    elif "logistics" in industry:
         bucket = "logistics"
-    elif "silver" in industry.lower():
+    elif "silver" in industry:
         bucket = "silver"
     else:
         bucket = "mining"
@@ -412,6 +427,10 @@ def get_cover_image(industry: str) -> str:
     
     return url
 
+def _get_stock_id(ticker: str) -> str:
+    stock = all_stocks.get(ticker)
+    return stock["id"] if stock else None
+        
 def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
@@ -424,22 +443,42 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     else:
         item_colour = "#FFFFFF"
     
-    fieldData = {
-        "name": hash,
-        "announcement-datetime": datetime,
-        "announcement-title": formal_title,
-        "announcement-company": ticker,
-        "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-        "market-sensitive": market_sensitive,
-        "cash-flow": is_cash_flow,
-        "substantial": is_substantial,
-        "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+    stock_id = _get_stock_id(ticker)
+    
+    if stock_id:
+        fieldData = {
+            "name": hash,
+            "announcement-datetime": datetime,
+            "announcement-title": formal_title,
+            "announcement-company-2": stock_id,
+            "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+            "market-sensitive": market_sensitive,
+            "cash-flow": is_cash_flow,
+            "substantial": is_substantial,
+            "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+            
+        }
         
-    }
-    
-    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
-    
-    push_to_collection(announcement_collection_id, fieldData)
+        announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
+        push_to_collection(announcement_collection_id, fieldData)
+    else:
+        tqdm.write(f"ERROR: No stock found for ticker {ticker}, skipping....")
+
+        missing_stocks_path = "./server/data/missing_stocks.json"
+
+        if os.path.exists(missing_stocks_path):
+            with open(missing_stocks_path, "r") as f:
+                missing_stocks = json.load(f)
+        else:
+            missing_stocks = {
+                "tickers": []
+            }
+        
+        if ticker not in missing_stocks["tickers"]:
+            missing_stocks["tickers"].append(ticker)
+        
+        with open(missing_stocks_path, "w") as f:
+            json.dump(missing_stocks, f, indent=4)    
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
@@ -452,7 +491,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        print(f"Error dropping live item from webflow: {e}")
+        tqdm.write(f"Error dropping live item from webflow: {e}")
         
     try:
             response = requests.delete(
@@ -463,7 +502,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        print(f"Error deleting from webflow: {e}")
+        tqdm.write(f"Error deleting from webflow: {e}")
 
 def drop_oldest(collection_id: str) -> None:
     offset = 0
@@ -486,7 +525,7 @@ def drop_oldest(collection_id: str) -> None:
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -499,6 +538,7 @@ def drop_oldest(collection_id: str) -> None:
     
     delete_item(collection_id, oldest_item_id)
     
+'''
 def _get_industry_group(industry: str) -> str:
     if industry in ["Aluminum", "Copper", "Gold", "Industrial Metals", "Precious Metals", "Silver", "Steel"]:
         return "Metals and Mining"
@@ -516,23 +556,21 @@ def _get_industry_group(industry: str) -> str:
         return "Containers and Packaging"
     else:
         return "Consumables" # default case]
+'''
     
-def push_to_twitter(generated_content: dict, article_url: str) -> None:
+def push_to_twitter(title: str, article_url: str) -> None:
     try:
-        if generated_content and article_url:  
-    
-            if len(generated_content["short_title"]) > 120:
-                generated_content["short_title"] = generated_content["short_title"][:130] + "..."
-
-            text = f"{generated_content['short_title']}\n\n{article_url}"
+        if title and article_url:  
+            if len(title) > 130:
+                title = title[:127] + "..."
 
             twitter_client.create_tweet(
-                text = f"{generated_content['short_title']}\n\n{article_url}"
+                text = f"{title}\n\n{article_url}"
             )
         else:
-            print("Error: Missing content or URL for tweet")
+            tqdm.write("Error: Missing content or URL for tweet")
     except Exception as e:
-        print(f"Unexpected error posting to Twitter: {e}")
+        tqdm.write(f"Unexpected error posting to Twitter: {e}")
 
 def _generate_slug(title: str, max_length: int = 80) -> str:
     title_formatted = title.strip()
@@ -544,77 +582,89 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         slug = slug[:max_length].rsplit("-", 1)[0]
         
     return slug
+
+def collect_for_email(article_title: str, article_summary: str, article_image: str, url: str) -> None:
+    articles.insert_one({
+        "title": article_title,
+        "summary": article_summary,
+        "image": article_image,
+        "url": url
+    })
     
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
-    print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
     
     try:
         # Check if the article already exists in the site
         article_id = search_collection(collection_id, announcement_hash, "hash-value")
         if article_id:
-            print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
+            tqdm.write(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
             return
         
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
-            print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
+            tqdm.write(f"ERROR: Article threshold reached, deleting oldest article to make room....")
             drop_oldest(collection_id)
             
         stock_data = get_stock_data(ticker)
-
-        '''
-        # Concurrently generate content and search collections for relevant IDs
-        generated_content_task = generate_content(file_path, ticker)
-        sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-        industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-        industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
-        ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-        suggest_cover_image_task = get_cover_image(stock_data["industry"])
-
-        # Await all tasks concurrently
-        generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
-            generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
-        )
-        '''
         
-        generated = await generate_content(file_path, ticker)
-        sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-        industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
-        ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-        cover_image = get_cover_image(stock_data["industry"])
-        
-        article_slug = _generate_slug(generated["short_title"])
-        
-        print("Attempting webflow upload...")
+        if stock_data:
 
-        if generated and stock_data:
-            fieldData = {
-                "name": generated["short_title"],
-                "slug": article_slug,
-                "article-datetime": formatted_datetime,
-                "title": generated["long_title"],
-                "short-title": generated["short_title"],
-                "formal-title": formal_title,
-                "content": generated["content"],
-                "hash-value": announcement_hash,
-                "summary": generated["summary"],
-                "image-url": cover_image,
-                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
-                "article-sector": sector_id,
-                "article-industry": industry_id,
-                "article-ticker": ticker_id,
-                "article-industry-group": industry_group_id
-            }
+            '''
+            # Concurrently generate content and search collections for relevant IDs
+            generated_content_task = generate_content(file_path, ticker)
+            sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+            industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+            industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+            ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+            suggest_cover_image_task = get_cover_image(stock_data["industry"])
+
+            # Await all tasks concurrently
+            generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
+                generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
+            )
+            '''
             
-            # Push the article to the collection
-            push_to_collection(collection_id, fieldData)
+            generated = await generate_content(file_path, ticker)
+            sector_id = stock_data["sector"]
+            industry_id = stock_data["industry"]
+            industry_group_id = stock_data["industry_group"]
+            ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+            cover_image = get_cover_image(stock_data["industry"])
             
-            push_to_twitter(generated, f"https://www.rockstocks.ai/articles/{article_slug}")
+            article_slug = _generate_slug(generated["short_title"])
+            article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
+            tqdm.write("Attempting webflow upload...")
+
+            if generated:
+                fieldData = {
+                    "name": generated["short_title"],
+                    "slug": article_slug,
+                    "article-datetime": formatted_datetime,
+                    "title": generated["long_title"],
+                    "short-title": generated["short_title"],
+                    "formal-title": formal_title,
+                    "content": generated["content"],
+                    "hash-value": announcement_hash,
+                    "summary": generated["summary"],
+                    "image-url": cover_image,
+                    "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
+                    "article-sector": sector_id,
+                    "article-industry": industry_id,
+                    "article-ticker": ticker_id,
+                    "article-industry-group": industry_group_id
+                }
+                
+                # Push the article to the collection
+                push_to_collection(collection_id, fieldData)
+                push_to_twitter(generated["short_title"], article_url)
+                collect_for_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
+            
+            else:
+                tqdm.write("ERROR: Failed to generate content for article, skipping....")
         else:
-            print("Error: malformed content or stock data, skipping upload...")
+            tqdm.write("ERROR: Malformed data received, skipping....")
         
     finally:
         # Clean up the temporary file
@@ -635,12 +685,12 @@ def _format_datetime(unformatted_datetime: str) -> str:
         formatted_datetime = dt_utc.isoformat()
         return formatted_datetime
     except ValueError as e:
-        print(f"Error parsing datetime string: {e}")
+        tqdm.write(f"Error parsing datetime string: {e}")
 async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
     try:
         await process_announcement(announcement)
     except Exception as e:
-        print(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
+        tqdm.write(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
     finally:
         progress_bar.update(1)
 
@@ -662,7 +712,7 @@ async def process_announcement(announcement: dict) -> None:
     file_id = announcement.get("fileId", "")
     
     if not file_id:
-        print(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        tqdm.write(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
         return
 
     f_name = f"./{file_id}.pdf"
@@ -679,7 +729,7 @@ async def process_announcement(announcement: dict) -> None:
             try:
                 s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
             except Exception as e:
-                print(f"Error uploading file to S3: {e}")
+                tqdm.write(f"Error uploading file to S3: {e}")
                 return
             
             # generate formatted datetime for article stamp
@@ -692,12 +742,15 @@ async def process_announcement(announcement: dict) -> None:
 
             #TODO: Improve filtering mechanism to avoid unnecessary uploads
             if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                print("Discovered legal entry!")                                 
+                tqdm.write("Discovered legal entry!")                                 
                 asyncio.create_task(
                     push_article_to_site(
                         f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
                     )
                 )
+            else:
+                if os.path.exists(f_name):
+                    os.remove(f_name)
         
             documents.insert_one(
                 {
@@ -713,10 +766,10 @@ async def process_announcement(announcement: dict) -> None:
             )
                 
         else:
-            print(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+            tqdm.write(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
             
     except Exception as e:
-        print(f"Error validating announcement {announcement['fileId']}: {e}")
+        tqdm.write(f"Error validating announcement {announcement['fileId']}: {e}")
                    
 async def renew_announcements() -> None:
     curr_time = _get_curr_time()
@@ -741,6 +794,8 @@ async def renew_announcements() -> None:
         else:
             print(f"New announcements found, processing....")
             daily_announcements.reverse()
+            
+            daily_announcements = daily_announcements[:50]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
