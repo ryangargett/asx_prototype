@@ -1,4 +1,5 @@
 import asyncio
+import async_timeout
 import colorama
 import holidays
 import json
@@ -7,6 +8,7 @@ import pytz
 import random
 import regex as re
 import requests
+import traceback
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -67,7 +69,8 @@ formatter = Formatter("%(asctime)s | %(levelname)s | %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-announcement_semaphore = Semaphore(30)
+announcement_semaphore = Semaphore(10)
+asx_download_semaphore = Semaphore(3)
 
 from summarizer import read_pdf, summarize_content
 
@@ -275,8 +278,6 @@ async def generate_content(file_path: str, ticker: str) -> dict:
     try:
         parsed_content = read_pdf(file_path)
         
-        summarize_content_task = summarize_content(parsed_content, logger, ticker)
-        
         summary_prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         
         short_title_prompt = f"Suggest an SEO-optimized title for the following company {ticker} announcement appropriate for a finance blog targeted towards beginner traders. This title cannot exceed 60 characters. The title should include critical financial information if needed and summarise all findings and crucial information from the announcement whilst being attractive and enticing to new users. This title cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUGGESTED TITLE:"
@@ -285,23 +286,25 @@ async def generate_content(file_path: str, ticker: str) -> dict:
         
         email_summary_prompt = f"Provide a short (maximum 40 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a email newsletter towards beginner traders. This summary cannot include the ASX ticker OR company name in any way, assume this is already included in the newsletter headline. (for example Announced an initial tungsten resource at its Hillgrove Project instead of Larvotto Resources Limited announced an initial tungsten resource at its Hillgrove Project).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         
-        summary_task = summarize_content(parsed_content, logger, ticker, prompt=summary_prompt)
-        short_title_task = summarize_content(parsed_content, logger, ticker, prompt=short_title_prompt)
-        long_title_task = summarize_content(parsed_content, logger, ticker, prompt=long_title_prompt)
-        email_summary_task = summarize_content(parsed_content, logger, ticker, prompt=email_summary_prompt)
+        content = await summarize_content(parsed_content, logger, ticker)
+        summary = await summarize_content(parsed_content, logger, ticker, prompt=summary_prompt)
+        short_title = await summarize_content(parsed_content, logger, ticker, prompt=short_title_prompt)
+        long_title = await summarize_content(parsed_content, logger, ticker, prompt=long_title_prompt)
+        email_summary = await summarize_content(parsed_content, logger, ticker, prompt=email_summary_prompt)
         
-        document_content, summary, email_summary, short_title, long_title = await asyncio.gather(
-            summarize_content_task, summary_task, email_summary_task, short_title_task, long_title_task
-        )
+        logger.info(f"Summary: {summary}")
+        logger.info(f"Short title: {short_title}")
+        logger.info(f"Long title: {long_title}")
+        logger.info(f"Email summary: {email_summary}")
         
-        logger.info("Document processed successfully")
+        logger.info("Document summarized successfully")
     except Exception as e:
         logger.error(f"Error generating content: {e}")
     
     content =  {
         "short_title": short_title,
         "long_title": long_title,
-        "content": document_content,
+        "content": content,
         "summary": summary,
         "email_summary": email_summary
     }
@@ -720,9 +723,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     except Exception as e:
         logger.error(f"Failure in generating article for {file_path} {formal_title}: {e}")    
     finally:
-        # Clean up the temporary file
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        _remove_file(file_path)
             
         logger.info(f"Concluded construction process for {file_path} {formal_title}....")
 
@@ -749,7 +750,63 @@ async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> N
         logger.error(f"Failure in processing announcement {announcement.get('fileId', 'NA')}: {e}")
     finally:
         progress_bar.update(1)
+        
+def _remove_file(path: str) -> None:
+    if os.path.exists(path):
+        os.remove(path)
 
+async def download_document(
+    client,
+    url: str,
+    f_name: str,
+    headers: dict,
+    auth: tuple,
+    max_retries: int = 3,
+    default_timeout_secs: int = 30,
+    timeout_per_mb: int = 1,
+    timeout_cap_secs: int = 60,
+):
+    for attempt in range(1, max_retries + 1):
+        try:
+            # First, send a HEAD request to get content length
+            head_response = await client.head(url, headers=headers, auth=auth)
+            content_length = head_response.headers.get("Content-Length")
+
+            # Calculate timeout based on content length (in MB)
+            timeout_secs = default_timeout_secs
+            if content_length:
+                size_mb = int(content_length) / (1024 * 1024)
+                # Add 10 seconds buffer and cap the timeout
+                timeout_secs = min(int(size_mb * timeout_per_mb) + 10, timeout_cap_secs)
+
+            logger.debug(f"Attempt {attempt}: Using timeout {timeout_secs}s to download {url}")
+
+            async with async_timeout.timeout(timeout_secs):
+                async with client.stream("GET", url, headers=headers, auth=auth) as response:
+                    response.raise_for_status()
+                    with open(f_name, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+            return True  # success, exit function
+
+        except (httpx.RequestError, httpx.HTTPStatusError, httpx.TimeoutException) as e:
+            logger.warning(f"Attempt {attempt} failed to download {url}: {e}")
+            if attempt == max_retries:
+                logger.error(f"Max retries exceeded for {url}, skipping download.")
+                return False
+            await asyncio.sleep(2 * attempt)  # exponential backoff
+
+        except asyncio.CancelledError as ce:
+            logger.error(f"Download cancelled for {url} on attempt {attempt}: {ce}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Unexpected error on attempt {attempt} for {url}: {e}")
+            if attempt == max_retries:
+                logger.error(f"Max retries exceeded due to unexpected error for {url}, skipping.")
+                return False
+            await asyncio.sleep(2 * attempt)
+            
 async def process_announcement(announcement: dict) -> None:
     """
     This function processes an individual announcement concurrently by validating,
@@ -763,6 +820,8 @@ async def process_announcement(announcement: dict) -> None:
         "Connection": "keep-alive"
     }
     
+    auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
+    
     legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
     
     file_id = announcement.get("fileId", "")
@@ -775,23 +834,20 @@ async def process_announcement(announcement: dict) -> None:
 
     try: # check to see if document already exists in the database and is properly formed before downloading from API
         if documents.find_one({"file_id": file_id}) is None:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    announcement["documentURL"],
-                    headers=headers,
-                    auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")),
-                    timeout=30.0
-                )
-            
-            with open(f_name, "wb") as f:
-                f.write(response.content)
-            
+            async with asx_download_semaphore:
+                async with httpx.AsyncClient() as client:
+                    success = await download_document(client, announcement["documentURL"], f_name, headers = headers, auth = auth)
+                    if not success:
+                        _remove_file(f_name)
+                        return
+                            
             announcement_hash = get_hash(f_name)
             
             try:
                 s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
             except Exception as e:
                 logger.error(f"Failed uploading file to S3: {e}")
+                _remove_file(f_name)
                 return
             
             # generate formatted datetime for article stamp
@@ -812,8 +868,7 @@ async def process_announcement(announcement: dict) -> None:
                         )
                     )
                 else:
-                    if os.path.exists(f_name):
-                        os.remove(f_name)
+                    _remove_file(f_name)
             
                 documents.insert_one(
                     {
@@ -830,11 +885,15 @@ async def process_announcement(announcement: dict) -> None:
                     
             else:
                 logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
+                _remove_file(f_name)
         else:
             logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+            _remove_file(f_name)
             
     except Exception as e:
-        logger.error(f"Error validating announcement {announcement['fileId']}: {e}")
+        logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
+        #logger.error(traceback.format_exc())
+        _remove_file(f_name)
                    
 async def renew_announcements() -> None:
 
@@ -855,7 +914,7 @@ async def renew_announcements() -> None:
             logger.info(f"New announcements found, processing....")
             daily_announcements.reverse()
             
-            daily_announcements = daily_announcements[:20]
+            daily_announcements = daily_announcements[:200]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
@@ -889,7 +948,7 @@ async def lifespan(app: FastAPI):
         renew_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="7-17",
+        #hour="7-23",
         minute="*",
         max_instances=1
     )
