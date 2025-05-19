@@ -70,19 +70,3 @@ def read_pdf(in_file: str) -> str:
         page_content += f"\n**PAGE {idx + 1} CONTENT:**\n" + page.extract_text().strip()
         
     return page_content
-
-async def main():
-    async with openai_semaphore:
-        response = await openai_client.chat.completions.create(
-            model="o3-mini-2025-01-31",
-            messages=[
-                {"role": "system", "content": "You are an intelligent agent."},
-                {"role": "user", "content": "Tell me a cool fact about the moon."},
-            ],
-        )
-    if response:
-        print(response.choices[0].message.content)
-        
-asyncio.run(main())
-    
-    
