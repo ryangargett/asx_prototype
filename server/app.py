@@ -46,9 +46,6 @@ documents = db["documents_new"]
 stocks = db["stocks"]
 articles = db["articles"]
 
-documents.delete_many({})
-articles.delete_many({})
-
 missing_stocks = []
 
 # check if s3 connection can be established
