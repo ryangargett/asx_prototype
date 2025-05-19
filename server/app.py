@@ -123,8 +123,8 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         
     return cached_collection
 
-all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
-all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -464,7 +464,7 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     else:
         tqdm.write(f"ERROR: No stock found for ticker {ticker}, skipping....")
 
-        missing_stocks_path = "./server/data/missing_stocks.json"
+        missing_stocks_path = "./data/missing_stocks.json"
 
         if os.path.exists(missing_stocks_path):
             with open(missing_stocks_path, "r") as f:
