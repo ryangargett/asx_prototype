@@ -975,8 +975,6 @@ async def renew_announcements() -> None:
             logger.info(f"New announcements found, processing....")
             daily_announcements.reverse()
             
-            daily_announcements = daily_announcements[:200]
-            
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
             announcement_processing_tasks = []
