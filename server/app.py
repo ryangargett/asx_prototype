@@ -8,6 +8,7 @@ import random
 import regex as re
 import requests
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from hashlib import sha256
@@ -24,11 +25,13 @@ from fastapi import FastAPI
 from pymongo import MongoClient
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
-from tweepy import Client
+from tweepy.asynchronous import AsyncClient
 from unidecode import unidecode
 
 from dotenv import load_dotenv
 load_dotenv()
+
+reset_executor = ThreadPoolExecutor(max_workers=1)
 
 class CustomAsyncHandler(StreamHandler):
     def __init__(self):
@@ -99,12 +102,13 @@ except Exception as e:
 
 # check if twitter connection can be established
 try:
-    twitter_client = Client(
+    twitter_client = AsyncClient(
         os.getenv("TWITTER_BEARER_TOKEN"),
         os.getenv("TWITTER_API_KEY"),
         os.getenv("TWITTER_API_SECRET"),
         os.getenv("TWITTER_ACCESS_TOKEN"),
-        os.getenv("TWITTER_ACCESS_SECRET")
+        os.getenv("TWITTER_ACCESS_SECRET"),
+        wait_on_rate_limit=True
     )
     logger.info("Twitter connection successful")
 except Exception as e:
@@ -113,9 +117,6 @@ except Exception as e:
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
 def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
-    
-    logger.info("Beginning collection process....")
-    
     if os.path.exists(cache_path):
         with open(cache_path) as f:
             cached_collection = json.load(f)
@@ -166,6 +167,9 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
 
 all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
 all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
+
+if all_stocks and all_industries:
+    logger.info("Successfully loaded all stocks and industries from cache")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -604,13 +608,13 @@ def _get_industry_group(industry: str) -> str:
         return "Consumables" # default case]
 '''
     
-def push_to_twitter(title: str, article_url: str) -> None:
+async def push_to_twitter(title: str, article_url: str) -> None:
     try:
         if title and article_url:  
             if len(title) > 130:
                 title = title[:127] + "..."
 
-            twitter_client.create_tweet(
+            await twitter_client.create_tweet(
                 text = f"{title}\n\n{article_url}"
             )
         else:
@@ -706,8 +710,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 
                 # Push the article to the collection
                 push_to_collection(collection_id, fieldData)
-                push_to_twitter(generated["short_title"], article_url)
                 collect_for_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
+                await push_to_twitter(generated["short_title"], article_url)
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
@@ -825,9 +829,9 @@ async def process_announcement(announcement: dict) -> None:
                 )
                     
             else:
-                logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+                logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
         else:
-            logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
+            logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
             
     except Exception as e:
         logger.error(f"Error validating announcement {announcement['fileId']}: {e}")
@@ -885,19 +889,22 @@ async def lifespan(app: FastAPI):
         renew_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="7-23",
+        hour="7-17",
         minute="*",
         max_instances=1
     )
     
     # Daily reset (23:30 on trading days)
     scheduler.add_job(
-        reset_daily_announcements,
+        lambda: asyncio.get_event_loop().run_in_executor(
+            reset_executor, reset_daily_announcements
+        ),
         "cron",
         day_of_week="mon,tue,wed,thu",
         hour=23,
         minute=30,
-        max_instances=1
+        max_instances=1,
+        name="reset_announcements"
     )
     
     scheduler.start()
