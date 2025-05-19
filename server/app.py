@@ -47,6 +47,7 @@ stocks = db["stocks"]
 articles = db["articles"]
 
 documents.delete_many({})
+articles.delete_many({})
 
 missing_stocks = []
 
@@ -73,26 +74,25 @@ except Exception as e:
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
-def get_all_stocks() -> dict:
+def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
     
-    if os.path.exists("./server/data/all_stocks.json"):
-        with open("./server/data/all_stocks.json", "r") as f:
-            stocks = json.load(f)
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached_collection = json.load(f)
     
     else:
         
         offset = 0
         page_limit = 100
         collected_all = False
-        stocks = {}
-        announcement_collection_id = os.getenv("WEBFLOW_STOCK_COLLECTION_ID")
+        cached_items = {}
 
         print("Beginning collection process....")
 
         while not collected_all:
             try:
                 response = requests.get(
-                f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
+                f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
                 headers = {
                     "Authorization": "Bearer " + access_token,
                     "Content-Type": "application/json"
@@ -105,8 +105,12 @@ def get_all_stocks() -> dict:
                 items = response.json()["items"]
 
                 for item in items:
-                    ticker = item["fieldData"]["ticker"]
-                    stocks[ticker] = item
+                    if key_field == "id":
+                        entry = item["id"]
+                    else:
+                        entry = item["fieldData"][key_field]
+                        
+                    cached_items[entry] = item
 
                 if len(items) < page_limit:
                     collected_all = True
@@ -115,14 +119,15 @@ def get_all_stocks() -> dict:
             except Exception as e:
                 print(f"Error uploading to webflow: {e}")
         
-        stocks = dict(sorted(stocks.items()))
+        cached_collection = dict(sorted(cached_items.items()))
         
-        with open("./server/data/all_stocks.json", "w") as f:
-            json.dump(stocks, f, indent = 4)
+        with open(cache_path, "w") as f:
+            json.dump(cached_collection, f, indent = 4)
         
-    return stocks
+    return cached_collection
 
-all_stocks = get_all_stocks()
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -181,7 +186,7 @@ def reset_daily_announcements() -> None:
         for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
-        print(f"ERROR: No announcements found in collection {collection_id} to reset")
+        tqdm.write(f"ERROR: No announcements found in collection {collection_id} to reset")
            
     print(f"Announcements successfully reset")
 
@@ -191,7 +196,7 @@ def get_hash(file_path: str) -> str:
             hash = sha256(f.read()).hexdigest()
         return hash
     except Exception as e:
-        print(f"Error hashing file: {e}")
+        tqdm.write(f"Error hashing file: {e}")
         return ""
     
 '''
@@ -225,7 +230,6 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
 async def generate_content(file_path: str, ticker: str) -> dict:
     
     try:
-        print("Reading document...")
         parsed_content = read_pdf(file_path)
         
         summarize_task = summarize_content(parsed_content, ticker)
@@ -241,13 +245,13 @@ async def generate_content(file_path: str, ticker: str) -> dict:
             summarize_task, summary_task, email_summary_task, title_task
         )
         
-        print(document_content)
-        print(summary)
-        print(short_title, long_title)
+        tqdm.write(document_content)
+        tqdm.write(summary)
+        tqdm.write(short_title, long_title)
         
-        print("Document processed successfully")
+        tqdm.write("Document processed successfully")
     except Exception as e:
-        print(f"Error generating content: {e}")
+        tqdm.write(f"Error generating content: {e}")
     
     content =  {
         "short_title": short_title,
@@ -296,7 +300,7 @@ def _get_collection_size(collection_id: str) -> int:
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -320,14 +324,12 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
                 "fieldData": payload
             }
         )
-        
-        print(response.json())
             
     except Exception as e:
-        print(f"Error uploading to webflow: {e}")
+        tqdm.write(f"Error uploading to webflow: {e}")
 
 
-def search_collection(collection_id: str, search_query: str, field: str = "name") -> str:
+def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
     offset = 0
     page_limit = 100
     collected_all = False
@@ -347,7 +349,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -361,8 +363,8 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
         for item in all_items:
             if item["fieldData"][field] == search_query:
                 return item["id"]
-        
-    print(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
+    if suppress_warning is False:   
+        tqdm.write(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
     return item_id
         
 
@@ -381,44 +383,45 @@ def _get_url_from_bucket(bucket: str) -> str:
         random_image = random.choice(images)
         image_key = random_image["Key"]
         url = f"https://rtwimages.s3.ap-southeast-2.amazonaws.com/{image_key}"
-        
-        print(f"Image URL: {url}")
     except Exception as e:
-        print(f"Error fetching image URL from bucket: {e}, using default....")
+        tqdm.write(f"Error fetching image URL from bucket: {e}, using default....")
         
     return url
     
-def get_cover_image(industry: str) -> str:
+def get_cover_image(industry_id: str) -> str:
+    
+    industry = all_industries[industry_id]["fieldData"]["name"]
+    industry = industry.lower().strip()
 
     #TODO: Significantly expand this system
 
-    if "oil & gas" in industry.lower():
+    if "oil & gas" in industry:
         bucket = "oilandgas"
-    elif "renewable" in industry.lower():
+    elif "renewable" in industry:
         bucket = "renewables"
-    elif "uranium" in industry.lower():
+    elif "uranium" in industry:
         bucket = "nuclear"
-    elif "chemical" in industry.lower():
+    elif "chemical" in industry:
         bucket = "chemicals"
-    elif "coal" in industry.lower():
+    elif "coal" in industry:
         bucket = "coal"
-    elif "lumber" in industry.lower():
+    elif "lumber" in industry:
         bucket = "lumber"
-    elif "packaging" in industry.lower():
+    elif "packaging" in industry:
         bucket = "packaging"
-    elif "gold" in industry.lower():
+    elif "gold" in industry:
         bucket = "gold"
-    elif "steel" in industry.lower():
+    elif "steel" in industry:
         bucket = "steel"
-    elif "agriculture" in industry.lower():
+    elif "agricultur" in industry:
         bucket = "agriculture"
-    elif "construction" in industry.lower():
+    elif "construction" in industry:
         bucket = "construction"
-    elif "biotech" in industry.lower():
+    elif "biotech" in industry:
         bucket = "biotech"
-    elif "logistics" in industry.lower():
+    elif "logistics" in industry:
         bucket = "logistics"
-    elif "silver" in industry.lower():
+    elif "silver" in industry:
         bucket = "silver"
     else:
         bucket = "mining"
@@ -460,10 +463,9 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         }
         
         announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
-        
-        #push_to_collection(announcement_collection_id, fieldData)
+        push_to_collection(announcement_collection_id, fieldData)
     else:
-        print(f"ERROR: No stock found for ticker {ticker}, skipping....")
+        tqdm.write(f"ERROR: No stock found for ticker {ticker}, skipping....")
 
         missing_stocks_path = "./server/data/missing_stocks.json"
 
@@ -472,10 +474,11 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
                 missing_stocks = json.load(f)
         else:
             missing_stocks = {
-                "missing_stocks": []
+                "tickers": []
             }
-            
-        missing_stocks["missing_stocks"].append(ticker)
+        
+        if ticker not in missing_stocks["tickers"]:
+            missing_stocks["tickers"].append(ticker)
         
         with open(missing_stocks_path, "w") as f:
             json.dump(missing_stocks, f, indent=4)    
@@ -491,7 +494,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        print(f"Error dropping live item from webflow: {e}")
+        tqdm.write(f"Error dropping live item from webflow: {e}")
         
     try:
             response = requests.delete(
@@ -502,7 +505,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        print(f"Error deleting from webflow: {e}")
+        tqdm.write(f"Error deleting from webflow: {e}")
 
 def drop_oldest(collection_id: str) -> None:
     offset = 0
@@ -525,7 +528,7 @@ def drop_oldest(collection_id: str) -> None:
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            tqdm.write(f"Error uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -561,7 +564,6 @@ def _get_industry_group(industry: str) -> str:
 def push_to_twitter(title: str, article_url: str) -> None:
     try:
         if title and article_url:  
-    
             if len(title) > 130:
                 title = title[:127] + "..."
 
@@ -569,9 +571,9 @@ def push_to_twitter(title: str, article_url: str) -> None:
                 text = f"{title}\n\n{article_url}"
             )
         else:
-            print("Error: Missing content or URL for tweet")
+            tqdm.write("Error: Missing content or URL for tweet")
     except Exception as e:
-        print(f"Unexpected error posting to Twitter: {e}")
+        tqdm.write(f"Unexpected error posting to Twitter: {e}")
 
 def _generate_slug(title: str, max_length: int = 80) -> str:
     title_formatted = title.strip()
@@ -594,18 +596,17 @@ def collect_for_email(article_title: str, article_summary: str, article_image: s
     
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
-    print(file_path, announcement_hash, formatted_datetime, ticker, formal_title)
     
     try:
         # Check if the article already exists in the site
         article_id = search_collection(collection_id, announcement_hash, "hash-value")
         if article_id:
-            print(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
+            tqdm.write(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
             return
         
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
-            print(f"ERROR: Article threshold reached, deleting oldest article to make room....")
+            tqdm.write(f"ERROR: Article threshold reached, deleting oldest article to make room....")
             drop_oldest(collection_id)
             
         stock_data = get_stock_data(ticker)
@@ -637,7 +638,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            print("Attempting webflow upload...")
+            tqdm.write("Attempting webflow upload...")
 
             if generated:
                 fieldData = {
@@ -664,9 +665,9 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 collect_for_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
             
             else:
-                print("ERROR: Failed to generate content for article, skipping....")
+                tqdm.write("ERROR: Failed to generate content for article, skipping....")
         else:
-            print("ERROR: Malformed data received, skipping....")
+            tqdm.write("ERROR: Malformed data received, skipping....")
         
     finally:
         # Clean up the temporary file
@@ -687,12 +688,12 @@ def _format_datetime(unformatted_datetime: str) -> str:
         formatted_datetime = dt_utc.isoformat()
         return formatted_datetime
     except ValueError as e:
-        print(f"Error parsing datetime string: {e}")
+        tqdm.write(f"Error parsing datetime string: {e}")
 async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
     try:
         await process_announcement(announcement)
     except Exception as e:
-        print(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
+        tqdm.write(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
     finally:
         progress_bar.update(1)
 
@@ -714,7 +715,7 @@ async def process_announcement(announcement: dict) -> None:
     file_id = announcement.get("fileId", "")
     
     if not file_id:
-        print(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        tqdm.write(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
         return
 
     f_name = f"./{file_id}.pdf"
@@ -731,7 +732,7 @@ async def process_announcement(announcement: dict) -> None:
             try:
                 s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
             except Exception as e:
-                print(f"Error uploading file to S3: {e}")
+                tqdm.write(f"Error uploading file to S3: {e}")
                 return
             
             # generate formatted datetime for article stamp
@@ -744,7 +745,7 @@ async def process_announcement(announcement: dict) -> None:
 
             #TODO: Improve filtering mechanism to avoid unnecessary uploads
             if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                print("Discovered legal entry!")                                 
+                tqdm.write("Discovered legal entry!")                                 
                 asyncio.create_task(
                     push_article_to_site(
                         f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
@@ -768,10 +769,10 @@ async def process_announcement(announcement: dict) -> None:
             )
                 
         else:
-            print(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+            tqdm.write(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
             
     except Exception as e:
-        print(f"Error validating announcement {announcement['fileId']}: {e}")
+        tqdm.write(f"Error validating announcement {announcement['fileId']}: {e}")
                    
 async def renew_announcements() -> None:
     curr_time = _get_curr_time()
@@ -797,7 +798,7 @@ async def renew_announcements() -> None:
             print(f"New announcements found, processing....")
             daily_announcements.reverse()
             
-            #daily_announcements = daily_announcements[:100]
+            daily_announcements = daily_announcements[:50]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
