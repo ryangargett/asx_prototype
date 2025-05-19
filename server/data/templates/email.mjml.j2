@@ -63,6 +63,15 @@
           <mj-spacer height="20px" />
         </mj-column>
       </mj-section>
+      {% else %}
+      <!-- No Articles Message -->
+      <mj-section>
+        <mj-column>
+          <mj-text align="center" font-size="16px" color="#555555" padding="20px">
+            No articles so far today ☺️
+          </mj-text>
+        </mj-column>
+      </mj-section>
       {% endfor %}
 
       <!-- Footer -->
