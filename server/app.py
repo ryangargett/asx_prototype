@@ -832,7 +832,7 @@ async def download_document(
             return False
 
         except Exception as e:
-            logger.error(f"Unexpected error on attempt {attempt} for {url}: {e}")
+            logger.warning(f"Unexpected error on attempt {attempt} for {url}: {e}")
             if attempt == max_retries:
                 logger.error(f"Max retries exceeded due to unexpected error for {url}, skipping.")
                 return False
