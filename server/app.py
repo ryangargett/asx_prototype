@@ -46,6 +46,8 @@ documents = db["documents_new"]
 stocks = db["stocks"]
 articles = db["articles"]
 
+documents.delete_many({})
+
 missing_stocks = []
 
 # check if s3 connection can be established
@@ -71,18 +73,18 @@ except Exception as e:
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
-def get_all_stocks() -> list:
+def get_all_stocks() -> dict:
     
     if os.path.exists("./server/data/all_stocks.json"):
         with open("./server/data/all_stocks.json", "r") as f:
-            stocks_sorted = json.load(f)
+            stocks = json.load(f)
     
     else:
         
         offset = 0
         page_limit = 100
         collected_all = False
-        all_items = []
+        stocks = {}
         announcement_collection_id = os.getenv("WEBFLOW_STOCK_COLLECTION_ID")
 
         print("Beginning collection process....")
@@ -100,21 +102,25 @@ def get_all_stocks() -> list:
                 }
             )
                 
-            except Exception as e:
-                print(f"Error fetching from webflow: {e}")
+                items = response.json()["items"]
 
-            all_items.extend(response.json()["items"])
-            
-            if len(response.json()["items"]) < page_limit:
-                collected_all = True
-            else:
-                offset += page_limit
-        stocks_sorted = sorted(all_items, key=lambda x: x["fieldData"]["ticker"])
+                for item in items:
+                    ticker = item["fieldData"]["ticker"]
+                    stocks[ticker] = item
+
+                if len(items) < page_limit:
+                    collected_all = True
+                else:
+                    offset += page_limit
+            except Exception as e:
+                print(f"Error uploading to webflow: {e}")
+        
+        stocks = dict(sorted(stocks.items()))
         
         with open("./server/data/all_stocks.json", "w") as f:
-            json.dump(stocks_sorted, f, indent = 4)
+            json.dump(stocks, f, indent = 4)
         
-    return stocks_sorted
+    return stocks
 
 all_stocks = get_all_stocks()
 
@@ -254,27 +260,20 @@ async def generate_content(file_path: str, ticker: str) -> dict:
     return content
 
 def get_stock_data(ticker: str) -> dict:
-    stock_data = None
-    
-    ticker_elements = ticker.split(":")
-    if len(ticker_elements) > 1:
-        ticker = ticker_elements[1] + ".AX"
-    else:
-        ticker = ticker + ".AX"
-    
-    details = stocks.find_one({"ticker": ticker})
-    if details:
-        sector = details.get("sector", "N/A")
-        industry = details.get("industry", "N/A")
-        industry_group = details.get("industry_group", "N/A")
+
+    entry = all_stocks.get(ticker, None)
+    if entry:
+        details = entry["fieldData"]
+        
+        sector = details["company-sector"]
+        industry = details["company-industry"]
+        industry_group = details["company-industry-group"]
         
         return {
             "sector": sector,
             "industry": industry,
             "industry_group": industry_group
         }
-    
-    return stock_data
 
 def _get_collection_size(collection_id: str) -> int:
     offset = 0
@@ -429,11 +428,8 @@ def get_cover_image(industry: str) -> str:
     return url
 
 def _get_stock_id(ticker: str) -> str:
-    for stock in all_stocks:
-        if stock["fieldData"]["ticker"] == ticker:
-            return stock["id"]
-        
-    return None
+    stock = all_stocks.get(ticker)
+    return stock["id"] if stock else None
         
 def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
     
@@ -465,24 +461,24 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         
         announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
         
-        push_to_collection(announcement_collection_id, fieldData)
+        #push_to_collection(announcement_collection_id, fieldData)
     else:
         print(f"ERROR: No stock found for ticker {ticker}, skipping....")
 
         missing_stocks_path = "./server/data/missing_stocks.json"
 
-        if not os.path.isfile(missing_stocks_path):
-            with open(missing_stocks_path, "w") as f:
-                json.dump([], f)
+        if os.path.exists(missing_stocks_path):
+            with open(missing_stocks_path, "r") as f:
+                missing_stocks = json.load(f)
+        else:
+            missing_stocks = {
+                "missing_stocks": []
+            }
+            
+        missing_stocks["missing_stocks"].append(ticker)
         
-        with open(missing_stocks_path) as f:
-            stock_not_found = json.load(f)
-        
-        if ticker not in [item["ticker"] for item in stock_not_found]:
-            stock_not_found.append({"ticker": ticker})
-            with open(missing_stocks_path, "w") as f:
-                json.dump(stock_not_found, f)
-        
+        with open(missing_stocks_path, "w") as f:
+            json.dump(missing_stocks, f, indent=4)    
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
@@ -562,17 +558,15 @@ def _get_industry_group(industry: str) -> str:
         return "Consumables" # default case]
 '''
     
-def push_to_twitter(generated_content: dict, article_url: str) -> None:
+def push_to_twitter(title: str, article_url: str) -> None:
     try:
-        if generated_content and article_url:  
+        if title and article_url:  
     
-            if len(generated_content["short_title"]) > 120:
-                generated_content["short_title"] = generated_content["short_title"][:130] + "..."
-
-            text = f"{generated_content['short_title']}\n\n{article_url}"
+            if len(title) > 130:
+                title = title[:127] + "..."
 
             twitter_client.create_tweet(
-                text = f"{generated_content['short_title']}\n\n{article_url}"
+                text = f"{title}\n\n{article_url}"
             )
         else:
             print("Error: Missing content or URL for tweet")
@@ -615,60 +609,64 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             drop_oldest(collection_id)
             
         stock_data = get_stock_data(ticker)
-
-        '''
-        # Concurrently generate content and search collections for relevant IDs
-        generated_content_task = generate_content(file_path, ticker)
-        sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-        industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-        industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
-        ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-        suggest_cover_image_task = get_cover_image(stock_data["industry"])
-
-        # Await all tasks concurrently
-        generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
-            generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
-        )
-        '''
         
-        generated = await generate_content(file_path, ticker)
-        sector_id = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
-        industry_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
-        industry_group_id = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), stock_data["industry_group"])
-        ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
-        cover_image = get_cover_image(stock_data["industry"])
-        
-        article_slug = _generate_slug(generated["short_title"])
-        article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
-        
-        print("Attempting webflow upload...")
+        if stock_data:
 
-        if generated and stock_data:
-            fieldData = {
-                "name": generated["short_title"],
-                "slug": article_slug,
-                "article-datetime": formatted_datetime,
-                "title": generated["long_title"],
-                "short-title": generated["short_title"],
-                "formal-title": formal_title,
-                "content": generated["content"],
-                "hash-value": announcement_hash,
-                "summary": generated["summary"],
-                "image-url": cover_image,
-                "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
-                "article-sector": sector_id,
-                "article-industry": industry_id,
-                "article-ticker": ticker_id,
-                "article-industry-group": industry_group_id
-            }
+            '''
+            # Concurrently generate content and search collections for relevant IDs
+            generated_content_task = generate_content(file_path, ticker)
+            sector_search_task = search_collection(os.getenv("WEBFLOW_SECTOR_COLLECTION_ID"), stock_data["sector"])
+            industry_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), stock_data["industry"])
+            industry_group_search_task = search_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), _get_industry_group(stock_data["industry"]))
+            ticker_search_task = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+            suggest_cover_image_task = get_cover_image(stock_data["industry"])
+
+            # Await all tasks concurrently
+            generated, sector_id, industry_id, industry_group_id, ticker_id, cover_image = await asyncio.gather(
+                generated_content_task, sector_search_task, industry_search_task, industry_group_search_task, ticker_search_task, suggest_cover_image_task
+            )
+            '''
             
-            # Push the article to the collection
-            push_to_collection(collection_id, fieldData)
-            push_to_twitter(generated, article_url)
-            collect_for_email(generated["summary"], article_url)
+            generated = await generate_content(file_path, ticker)
+            sector_id = stock_data["sector"]
+            industry_id = stock_data["industry"]
+            industry_group_id = stock_data["industry_group"]
+            ticker_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+            cover_image = get_cover_image(stock_data["industry"])
             
+            article_slug = _generate_slug(generated["short_title"])
+            article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
+            
+            print("Attempting webflow upload...")
+
+            if generated:
+                fieldData = {
+                    "name": generated["short_title"],
+                    "slug": article_slug,
+                    "article-datetime": formatted_datetime,
+                    "title": generated["long_title"],
+                    "short-title": generated["short_title"],
+                    "formal-title": formal_title,
+                    "content": generated["content"],
+                    "hash-value": announcement_hash,
+                    "summary": generated["summary"],
+                    "image-url": cover_image,
+                    "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
+                    "article-sector": sector_id,
+                    "article-industry": industry_id,
+                    "article-ticker": ticker_id,
+                    "article-industry-group": industry_group_id
+                }
+                
+                # Push the article to the collection
+                push_to_collection(collection_id, fieldData)
+                push_to_twitter(generated["short_title"], article_url)
+                collect_for_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
+            
+            else:
+                print("ERROR: Failed to generate content for article, skipping....")
         else:
-            print("Error: malformed content or stock data, skipping upload...")
+            print("ERROR: Malformed data received, skipping....")
         
     finally:
         # Clean up the temporary file
@@ -752,6 +750,9 @@ async def process_announcement(announcement: dict) -> None:
                         f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
                     )
                 )
+            else:
+                if os.path.exists(f_name):
+                    os.remove(f_name)
         
             documents.insert_one(
                 {
@@ -795,6 +796,8 @@ async def renew_announcements() -> None:
         else:
             print(f"New announcements found, processing....")
             daily_announcements.reverse()
+            
+            #daily_announcements = daily_announcements[:100]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
