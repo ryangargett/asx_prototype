@@ -12,9 +12,11 @@ from datetime import datetime
 from hashlib import sha256
 from pytz import timezone as tz
 
+import httpx
 import uvicorn
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from asyncio import Semaphore
 import boto3 as b3
 from fastapi import FastAPI
 from pymongo import MongoClient
@@ -25,6 +27,8 @@ from unidecode import unidecode
 
 from dotenv import load_dotenv
 load_dotenv()
+
+announcement_semaphore = Semaphore(20)
 
 from summarizer import read_pdf, summarize_content, suggest_title
 #from image_search import get_url_from_keyword
@@ -667,7 +671,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 tqdm.write("ERROR: Failed to generate content for article, skipping....")
         else:
             tqdm.write("ERROR: Malformed data received, skipping....")
-        
+    except Exception as e:
+        tqdm.write(f"Error generating article for {file_path} {formal_title}: {e}")    
     finally:
         # Clean up the temporary file
         if os.path.exists(file_path):
@@ -692,7 +697,8 @@ def _format_datetime(unformatted_datetime: str) -> str:
         tqdm.write(f"Error parsing datetime string: {e}")
 async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
     try:
-        await process_announcement(announcement)
+        async with announcement_semaphore:
+            await process_announcement(announcement)
     except Exception as e:
         tqdm.write(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
     finally:
@@ -723,7 +729,13 @@ async def process_announcement(announcement: dict) -> None:
 
     try: # check to see if document already exists in the database and is properly formed before downloading from API
         if documents.find_one({"file_id": file_id}) is None:
-            response = requests.get(announcement["documentURL"], headers=headers, auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")))
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    announcement["documentURL"],
+                    headers=headers,
+                    auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD")),
+                    timeout=30.0
+                )
             
             with open(f_name, "wb") as f:
                 f.write(response.content)
