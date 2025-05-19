@@ -1,4 +1,5 @@
 import asyncio
+import colorama
 import holidays
 import json
 import os
@@ -10,6 +11,7 @@ import requests
 from contextlib import asynccontextmanager
 from datetime import datetime
 from hashlib import sha256
+from logging import getLogger, LogRecord, Formatter, INFO, StreamHandler
 from pytz import timezone as tz
 
 import httpx
@@ -28,25 +30,58 @@ from unidecode import unidecode
 from dotenv import load_dotenv
 load_dotenv()
 
-announcement_semaphore = Semaphore(20)
+class CustomAsyncHandler(StreamHandler):
+    def __init__(self):
+        super().__init__()
+        colorama.init()
+        self._colors = {
+            "INFO": colorama.Fore.GREEN,
+            "WARNING": colorama.Fore.YELLOW,
+            "ERROR": colorama.Fore.RED,
+        }
+        self._reset = colorama.Style.RESET_ALL
 
-from summarizer import read_pdf, summarize_content, suggest_title
-#from image_search import get_url_from_keyword
+    def get_color(self, levelname: str) -> str:
+        return self._colors.get(levelname, '')
+
+    def format(self, record: LogRecord) -> str:
+        message = super().format(record)
+        return f"{self.get_color(record.levelname)}{message}{self._reset}"
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+            
+logger = getLogger("asx_app_logger")
+logger.setLevel(INFO)
+
+handler = CustomAsyncHandler()
+formatter = Formatter("%(asctime)s | %(levelname)s | %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+announcement_semaphore = Semaphore(30)
+
+from summarizer import read_pdf, summarize_content
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
 # Check if cluster is connected
 try:
     mongo_client.admin.command('ping')
-    print("MongoDB connection: Successful")
+    logger.info("MongoDB connection successful")
 except Exception as e:
-    print(f"MongoDB connection: Failed - {e}")
+    logger.error(f"MongoDB connection failed - {e}")
 
 access_token = os.getenv("WEBFLOW_API_KEY")
 collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
 
 db = mongo_client["main"]
-documents = db["documents_new"]
+documents = db["documents_new_2"]
 stocks = db["stocks"]
 articles = db["articles"]
 
@@ -58,8 +93,9 @@ try:
                         aws_access_key_id=os.getenv("AWS_ACCESS_KEY"),
                         aws_secret_access_key=os.getenv("AWS_SECRET_KEY"),   
                         region_name="ap-southeast-2")
+    logger.info("AWS connection successful")
 except Exception as e:
-    print(f"Error connecting to S3 bucket: {e}")
+    logger.error(f"AWS connection failed: {e}")
 
 # check if twitter connection can be established
 try:
@@ -70,12 +106,15 @@ try:
         os.getenv("TWITTER_ACCESS_TOKEN"),
         os.getenv("TWITTER_ACCESS_SECRET")
     )
+    logger.info("Twitter connection successful")
 except Exception as e:
-    print(f"Error connecting to Twitter API: {e}")
+    logger.error(f"Twitter connection failed: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
 def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
+    
+    logger.info("Beginning collection process....")
     
     if os.path.exists(cache_path):
         with open(cache_path) as f:
@@ -87,8 +126,6 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         page_limit = 100
         collected_all = False
         cached_items = {}
-
-        print("Beginning collection process....")
 
         while not collected_all:
             try:
@@ -118,7 +155,7 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
                 else:
                     offset += page_limit
             except Exception as e:
-                print(f"Error uploading to webflow: {e}")
+                logger.error(f"Failure downloading from webflow collection: {e}")
         
         cached_collection = dict(sorted(cached_items.items()))
         
@@ -127,12 +164,13 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         
     return cached_collection
 
-all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
-all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
 
+'''
 def _inside_trading_hours() -> bool:
     try:
         curr_time = _get_curr_time()
@@ -148,6 +186,7 @@ def _inside_trading_hours() -> bool:
         print(f"Error encountered when checking trading hours: {e}")
     
     return False
+'''
 
 def reset_daily_announcements() -> None:
     offset = 0
@@ -156,7 +195,7 @@ def reset_daily_announcements() -> None:
     all_items = []
     announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
 
-    print("Beginning reset process....")
+    logger.warning("Beginning reset process....")
 
     while not collected_all:
         try:
@@ -172,7 +211,7 @@ def reset_daily_announcements() -> None:
         )
             
         except Exception as e:
-            print(f"Error uploading to webflow: {e}")
+            logger.error(f"Failure connecting to webflow connection: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -181,15 +220,15 @@ def reset_daily_announcements() -> None:
         else:
             offset += page_limit
             
-    print(f"Found {len(all_items)} announcements in collection {announcement_collection_id} to reset.")
+    logger.info(f"Found {len(all_items)} announcements to reset.")
             
     if len(all_items) > 0:
         for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
-        tqdm.write(f"ERROR: No announcements found in collection {collection_id} to reset")
+        logger.warning(f"No announcements found in collection {collection_id} to reset")
            
-    print(f"Announcements successfully reset")
+    logger.info(f"Announcements successfully reset")
 
 def get_hash(file_path: str) -> str:
     try:
@@ -197,7 +236,7 @@ def get_hash(file_path: str) -> str:
             hash = sha256(f.read()).hexdigest()
         return hash
     except Exception as e:
-        tqdm.write(f"Error hashing file: {e}")
+        logger.error(f"Error hashing file: {e}")
         return ""
     
 '''
@@ -229,30 +268,31 @@ def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
 '''
 
 async def generate_content(file_path: str, ticker: str) -> dict:
-    
     try:
         parsed_content = read_pdf(file_path)
         
-        summarize_task = summarize_content(parsed_content, ticker)
+        summarize_content_task = summarize_content(parsed_content, logger, ticker)
         
         summary_prompt = f"Provide a short (maximum 50 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a finance blog targeted towards beginner traders. This summary cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
+        
+        short_title_prompt = f"Suggest an SEO-optimized title for the following company {ticker} announcement appropriate for a finance blog targeted towards beginner traders. This title cannot exceed 60 characters. The title should include critical financial information if needed and summarise all findings and crucial information from the announcement whilst being attractive and enticing to new users. This title cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUGGESTED TITLE:"
+        
+        long_title_prompt = f"Suggest an SEO-optimized title for the following company {ticker} announcement appropriate for a finance blog. The title should include critical financial information if needed and summarise all findings and crucial information from the announcement whilst being attractive and enticing to new users. This title cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUGGESTED TITLE:"
+        
         email_summary_prompt = f"Provide a short (maximum 40 word) summary for the following announcement released from company {ticker}. This summary should be attractive and appropriate for a email newsletter towards beginner traders. This summary cannot include the ASX ticker OR company name in any way, assume this is already included in the newsletter headline. (for example Announced an initial tungsten resource at its Hillgrove Project instead of Larvotto Resources Limited announced an initial tungsten resource at its Hillgrove Project).\n\nCOMPANY ANNOUNCEMENT: {parsed_content}\n\nSUMMARY:"
         
-        summary_task = summarize_content(parsed_content, ticker, prompt=summary_prompt)
-        email_summary_task = summarize_content(parsed_content, ticker, prompt=email_summary_prompt)
-        title_task = suggest_title(parsed_content, ticker)
+        summary_task = summarize_content(parsed_content, logger, ticker, prompt=summary_prompt)
+        short_title_task = summarize_content(parsed_content, logger, ticker, prompt=short_title_prompt)
+        long_title_task = summarize_content(parsed_content, logger, ticker, prompt=long_title_prompt)
+        email_summary_task = summarize_content(parsed_content, logger, ticker, prompt=email_summary_prompt)
         
-        document_content, summary, email_summary, (short_title, long_title) = await asyncio.gather(
-            summarize_task, summary_task, email_summary_task, title_task
+        document_content, summary, email_summary, short_title, long_title = await asyncio.gather(
+            summarize_content_task, summary_task, email_summary_task, short_title_task, long_title_task
         )
         
-        tqdm.write(document_content)
-        tqdm.write(summary)
-        tqdm.write(short_title, long_title)
-        
-        tqdm.write("Document processed successfully")
+        logger.info("Document processed successfully")
     except Exception as e:
-        tqdm.write(f"Error generating content: {e}")
+        logger.error(f"Error generating content: {e}")
     
     content =  {
         "short_title": short_title,
@@ -301,7 +341,7 @@ def _get_collection_size(collection_id: str) -> int:
         )
             
         except Exception as e:
-            tqdm.write(f"Error uploading to webflow: {e}")
+            logger.error(f"Failure in uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -327,7 +367,7 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
         )
             
     except Exception as e:
-        tqdm.write(f"Error uploading to webflow: {e}")
+        logger.error(f"Failure in uploading to webflow: {e}")
 
 
 def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
@@ -350,7 +390,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
         )
             
         except Exception as e:
-            tqdm.write(f"Error uploading to webflow: {e}")
+            logger.error(f"Failure in uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -365,7 +405,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
             if item["fieldData"][field] == search_query:
                 return item["id"]
     if suppress_warning is False:   
-        tqdm.write(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
+        logger.warning(f"ERROR: No item found in collection {collection_id} with search term {search_query}") 
     return item_id
         
 
@@ -385,7 +425,7 @@ def _get_url_from_bucket(bucket: str) -> str:
         image_key = random_image["Key"]
         url = f"https://rtwimages.s3.ap-southeast-2.amazonaws.com/{image_key}"
     except Exception as e:
-        tqdm.write(f"Error fetching image URL from bucket: {e}, using default....")
+        logger.warning(f"Failure in fetching image URL from bucket: {e}, using default....")
         
     return url
     
@@ -435,7 +475,7 @@ def _get_stock_id(ticker: str) -> str:
     stock = all_stocks.get(ticker)
     return stock["id"] if stock else None
         
-def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
+def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> str:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
     
@@ -465,10 +505,10 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         
         announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
         push_to_collection(announcement_collection_id, fieldData)
+        
+        return "success"
     else:
-        tqdm.write(f"ERROR: No stock found for ticker {ticker}, skipping....")
-
-        missing_stocks_path = "./data/missing_stocks.json"
+        missing_stocks_path = "./server/data/missing_stocks.json"
 
         if os.path.exists(missing_stocks_path):
             with open(missing_stocks_path, "r") as f:
@@ -482,7 +522,9 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
             missing_stocks["tickers"].append(ticker)
         
         with open(missing_stocks_path, "w") as f:
-            json.dump(missing_stocks, f, indent=4)    
+            json.dump(missing_stocks, f, indent=4)
+            
+        return None
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
@@ -495,7 +537,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        tqdm.write(f"Error dropping live item from webflow: {e}")
+        logger.error(f"Failure in dropping live item from webflow: {e}")
         
     try:
             response = requests.delete(
@@ -506,7 +548,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
             }
         )
     except Exception as e:
-        tqdm.write(f"Error deleting from webflow: {e}")
+        logger.error(f"Failure in deleting from webflow: {e}")
 
 def drop_oldest(collection_id: str) -> None:
     offset = 0
@@ -529,7 +571,7 @@ def drop_oldest(collection_id: str) -> None:
         )
             
         except Exception as e:
-            tqdm.write(f"Error uploading to webflow: {e}")
+            logger.error(f"Failure in uploading to webflow: {e}")
 
         all_items.extend(response.json()["items"])
         
@@ -572,9 +614,9 @@ def push_to_twitter(title: str, article_url: str) -> None:
                 text = f"{title}\n\n{article_url}"
             )
         else:
-            tqdm.write("Error: Missing content or URL for tweet")
+            logger.error("Missing content needed for tweet")
     except Exception as e:
-        tqdm.write(f"Unexpected error posting to Twitter: {e}")
+        logger.error(f"Unexpected error posting to Twitter: {e}")
 
 def _generate_slug(title: str, max_length: int = 80) -> str:
     title_formatted = title.strip()
@@ -598,18 +640,18 @@ def collect_for_email(article_title: str, article_summary: str, article_image: s
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     
-    tqdm.write(f"Beginning construction process for {file_path} {formal_title}....")
+    logger.info(f"Beginning construction process for {file_path} {formal_title}....")
     
     try:
         # Check if the article already exists in the site
-        article_id = search_collection(collection_id, announcement_hash, "hash-value")
+        article_id = search_collection(collection_id, announcement_hash, "hash-value", suppress_warning=True)
         if article_id:
-            tqdm.write(f"ERROR: Attempted publication failed due to pre-existing article on website, skipping....")
+            logger.warning(f"Attempted publication failed due to pre-existing article on website, skipping....")
             return
         
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
-            tqdm.write(f"ERROR: Article threshold reached, deleting oldest article to make room....")
+            logger.warning(f"Max article threshold reached, deleting oldest article to make room....")
             drop_oldest(collection_id)
             
         stock_data = get_stock_data(ticker)
@@ -641,7 +683,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            tqdm.write("Attempting webflow upload...")
+            logger.info("Attempting webflow upload...")
 
             if generated:
                 fieldData = {
@@ -668,17 +710,17 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 collect_for_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
             
             else:
-                tqdm.write("ERROR: Failed to generate content for article, skipping....")
+                logger.error("Failed to generate content for article, skipping....")
         else:
-            tqdm.write("ERROR: Malformed data received, skipping....")
+            logger.error("Malformed data received, skipping....")
     except Exception as e:
-        tqdm.write(f"Error generating article for {file_path} {formal_title}: {e}")    
+        logger.error(f"Failure in generating article for {file_path} {formal_title}: {e}")    
     finally:
         # Clean up the temporary file
         if os.path.exists(file_path):
             os.remove(file_path)
             
-        tqdm.write(f"Concluded construction process for {file_path} {formal_title}....")
+        logger.info(f"Concluded construction process for {file_path} {formal_title}....")
 
     
         
@@ -694,13 +736,13 @@ def _format_datetime(unformatted_datetime: str) -> str:
         formatted_datetime = dt_utc.isoformat()
         return formatted_datetime
     except ValueError as e:
-        tqdm.write(f"Error parsing datetime string: {e}")
+        logger.error(f"Error parsing datetime string: {e}")
 async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
     try:
         async with announcement_semaphore:
             await process_announcement(announcement)
     except Exception as e:
-        tqdm.write(f"Error processing announcement {announcement.get('fileId', 'NA')}: {e}")
+        logger.error(f"Failure in processing announcement {announcement.get('fileId', 'NA')}: {e}")
     finally:
         progress_bar.update(1)
 
@@ -722,7 +764,7 @@ async def process_announcement(announcement: dict) -> None:
     file_id = announcement.get("fileId", "")
     
     if not file_id:
-        tqdm.write(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        logger.error(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
         return
 
     f_name = f"./{file_id}.pdf"
@@ -745,7 +787,7 @@ async def process_announcement(announcement: dict) -> None:
             try:
                 s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
             except Exception as e:
-                tqdm.write(f"Error uploading file to S3: {e}")
+                logger.error(f"Failed uploading file to S3: {e}")
                 return
             
             # generate formatted datetime for article stamp
@@ -754,44 +796,44 @@ async def process_announcement(announcement: dict) -> None:
             is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
             is_substantial = True if "substantial" in announcement["heading"].lower() else False
                 
-            push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+            result = push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
 
             #TODO: Improve filtering mechanism to avoid unnecessary uploads
-            if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                tqdm.write("Discovered legal entry!")                                 
-                asyncio.create_task(
-                    push_article_to_site(
-                        f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+            if result:
+                if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                    logger.info("Discovered legal entry!")                                 
+                    asyncio.create_task(
+                        push_article_to_site(
+                            f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                        )
                     )
+                else:
+                    if os.path.exists(f_name):
+                        os.remove(f_name)
+            
+                documents.insert_one(
+                    {
+                        "file_id": announcement["fileId"],
+                        "title": announcement["heading"],
+                        "hash": announcement_hash,
+                        "date_released": announcement["dateTime"],
+                        "price_sensitive": announcement["isSensitive"],
+                        "linked_ticker": announcement["code"],
+                        "news_types": announcement["newsTypes"],
+                        "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                    }
                 )
+                    
             else:
-                if os.path.exists(f_name):
-                    os.remove(f_name)
-        
-            documents.insert_one(
-                {
-                    "file_id": announcement["fileId"],
-                    "title": announcement["heading"],
-                    "hash": announcement_hash,
-                    "date_released": announcement["dateTime"],
-                    "price_sensitive": announcement["isSensitive"],
-                    "linked_ticker": announcement["code"],
-                    "news_types": announcement["newsTypes"],
-                    "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
-                }
-            )
-                
+                logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
         else:
-            tqdm.write(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+            logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
             
     except Exception as e:
-        tqdm.write(f"Error validating announcement {announcement['fileId']}: {e}")
+        logger.error(f"Error validating announcement {announcement['fileId']}: {e}")
                    
 async def renew_announcements() -> None:
-    curr_time = _get_curr_time()
-    curr_time_formatted = curr_time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Reviewing new announcements at {curr_time_formatted} AEST")
-    
+
     username = os.getenv("ASX_API_USERNAME")
     password = os.getenv("ASX_API_PASSWORD")
         
@@ -801,15 +843,15 @@ async def renew_announcements() -> None:
             auth=(username, password)
         )
         
-        print(f"Polled at {curr_time_formatted} AEST")
-        
         daily_announcements = list(daily_announcements.json())
         last_announcement = daily_announcements[0]
         if documents.find_one({"file_id": last_announcement["fileId"]}):
-            print(f"No new announcements found since last poll, skipping....")
+            logger.info(f"No new announcements found since last poll, skipping....")
         else:
-            print(f"New announcements found, processing....")
+            logger.info(f"New announcements found, processing....")
             daily_announcements.reverse()
+            
+            daily_announcements = daily_announcements[:20]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
@@ -820,21 +862,19 @@ async def renew_announcements() -> None:
             
             await tqdm_asyncio.gather(*announcement_processing_tasks)
     except Exception as e:
-        print(f"Unexpected error encountered when polling ASX announcements: {e}")
+        logger.error(f"Unexpected error encountered when polling ASX announcements: {e}")
         
         curr_time = _get_curr_time()
         
         if curr_time.weekday() < 4: # Monday to Thursday, we keep announcements over the weekend
             if curr_time.hour >= 23 and curr_time.minute >= 30:
-                print(f"End of trading day, resetting announcements....")
+                logger.warning(f"End of trading day, resetting announcements....")
                 reset_daily_announcements()
-        else:
-            print(f"Day is not a trading day, skipping reset....")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
-    print("Starting FastAPI application...")
+    logger.info("Starting FastAPI application...")
     
     scheduler = AsyncIOScheduler(
         timezone = "Australia/Sydney"
@@ -845,7 +885,7 @@ async def lifespan(app: FastAPI):
         renew_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="7-19",
+        hour="7-23",
         minute="*",
         max_instances=1
     )

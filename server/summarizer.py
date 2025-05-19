@@ -5,10 +5,13 @@ import os
 import requests
 import uuid
 
+from asyncio import sleep, timeout, TimeoutError
 from typing import Optional
 
 import pandas as pd
+from logging import Logger
 
+from openai import AsyncClient, RateLimitError
 from decouple import config
 from pypdf import PdfReader
 from webflow.client import Webflow
@@ -57,69 +60,16 @@ def suggest_image_kwords(company: str, title: Optional[str] = "", model: Optiona
     suggested_image_kwords = response.choices[0].message.content
     return suggested_image_kwords
 
-async def suggest_title(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", user_prompts: Optional[dict] = None) -> tuple[str]:
-    """Generates short and long form title for technical ASX company announcements using a configurable LLM endpoint (defaults to gpt-4o-m)
-
-    Args:
-        content (str): transcript of the company announcement including labeled pages
-        company (str, optional): corresponding ASX company ticker
-        model (str, optional): _description_. Defaults to "gpt-4o-m".
-        user_prompt (dict, optional): _description_. Provided collection of user prompt, if not provided, default prompts are used compatible with RLHF models.
-
-    Returns:
-        short_title (str): short form title (constrained to < 20 words)
-        long_title (str): long form title 
-    """    
-    
-    client = openai.AsyncClient(api_key=config("OPENAI_KEY"))
-    system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
-    
-    
-    if not user_prompts:
-        if model == "o3-mini-2025-01-31":
-            user_prompts = {
-                "short": f"Suggest an SEO-optimized title for the following company {company} announcement appropriate for a finance blog targeted towards beginner traders. This title cannot exceed 60 characters. The title should include critical financial information if needed and summarise all findings and crucial information from the announcement whilst being attractive and enticing to new users. This title cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUGGESTED TITLE:",
-                "long": f"Suggest an SEO-optimized title for the following company {company} announcement appropriate for a finance blog. The title should include critical financial information if needed and summarise all findings and crucial information from the announcement whilst being attractive and enticing to new users. This title cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP).\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUGGESTED TITLE:"
-    }
-        else:
-            user_prompts = {
-                "short": f"""Provide a suggested short-form title appropriate for an article thumbnail based on the provided announcement and ASX ticker. This title should include relevant technical indicators / statistics, the company name, and the main topic of the announcement. The title should be concise and informative. This title MUST NOT EXCEED 60 CHARACTERS AND BE SEO OPTIMIZED. Do not exceed 60 characters. Do not include any punctuation or special characters in the title. \n\nEXAMPLES: \n- Warriedar Resources Reports Strong Antimony Recovery Results from Ricciardo Project \n- Great Boulder Resources Hits 8m @ 7.59g/t Au at Saltbush Prospect, Side Well Gold Project, Western Australia \n- Critical Resources Hits 34.9m @ 1.02% Li₂O at Mavis Lake Project, Ontario\n\nCOMPANY TICKER: {company}\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUGGESTED TITLE:""",
-                "long": f"""Provide a suggested title for the article based on the provided announcement and ASX ticker. This title should include relevant technical indicators / statistics, the company name, and the main topic of the announcement. The title should be concise and informative. Do not include any punctuation or special characters in the title. \n\nEXAMPLES: \n- Warriedar Resources Reports Strong Antimony Recovery Results from Ricciardo Project \n- Great Boulder Resources Hits 8m @ 7.59g/t Au at Saltbush Prospect, Side Well Gold Project, Western Australia \n- Critical Resources Hits 34.9m @ 1.02% Li₂O at Mavis Lake Project, Ontario\n\nCOMPANY TICKER: {company}\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUGGESTED TITLE:""", 
-            }
-    
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompts["short"]},
-        ]
-    )
-    
-    short_title = response.choices[0].message.content
-    
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompts["long"]},
-        ]
-    )
-    
-    long_title = response.choices[0].message.content
-    
-    return short_title.strip(), long_title.strip()
-
-async def summarize_content(content: str, company: Optional[str] = "", model: Optional[str] = "o3-mini-2025-01-31", prompt: Optional[str] = None) -> dict:
-    client = openai.AsyncClient(api_key=config("OPENAI_KEY"))
+async def summarize_content(
+    content: str,
+    logger: Logger,
+    company: Optional[str] = "", 
+    model: Optional[str] = "o3-mini-2025-01-31", 
+    prompt: Optional[str] = None,
+    max_retries: int = 3) -> dict:
     
     system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
-    
-    '''user_prompt_a = f"""Provide a summary article for the following ASX company announcement. The announcement is subdivided into pages which are delineated by **PAGE [NUMBER] CONTENT:**. \n\nCOMPANY ANNOUNCEMENT: {content} \n\nFormat your response like a typical journal article. Capture all relevant details contained in the announcement. Your target audience are casual investors that have a basic understanding of the stock market and economic principles. You should favour more journalistic language and structure over technical jargon whilst providing a summary for the provided article. Avoid bullet points. Every included paragraph should summarize a key idea and be formatted in accordance with news article writing. Only information that is helpful for casual investors should be included. Do not provide weblinks or urls. Only seperate paragraphs for clearly different ideas, and favour paragraph length over conciseness. Always use present perfect tense. For example instead of: \"Gold prices surged past $2,500 per ounce\" Use: \"Gold prices have surged past $2,500 per ounce\". Do not including any headings or subheadings in your summary.\n\nSUMMARY:"""
-    
-    user_prompt_b = f"""You are a senior experienced investor that is teaching a beginner investor good strategies to perform well in securing trades. This investor has a basic understanding of the stock market and economic principles, but is still extremely inexperienced and requires your expertise and guidance. You are given a company annoucement published in the Australia Stock Exchange (ASX). The announcement is subdivided into pages which are delineated by **PAGE [NUMBER] CONTENT:**. \n\nCOMPANY ANNOUNCEMENT: {content} \n\nFormat your response like a typical journal article. Capture all relevant details contained in the announcement. You should favour more journalistic language and structure over technical jargon whilst providing a summary for the provided article. Avoid bullet points. Only information that is helpful for the beginner investor should be included. Context and tips for the beginner investor should also be included where relevant based on the information provided. Do not provide weblinks or urls. Only seperate paragraphs for clearly different ideas, and favour paragraph length over conciseness. Always use present perfect tense. For example instead of: \"Gold prices surged past $2,500 per ounce\" Use: \"Gold prices have surged past $2,500 per ounce\". Do not including any headings or subheadings in your summary.\n\nSUMMARY:"""
-    
-    user_prompt_c = f"""You are a senior experienced investor that is teaching a beginner investor good strategies to perform well in securing trades. This investor has a basic understanding of the stock market and economic principles, but is still extremely inexperienced and requires your expertise and guidance. You are given a company annoucement published in the Australia Securities Exchange (ASX). The announcement is subdivided into pages which are delineated by **PAGE [NUMBER] CONTENT:**. \n\nCOMPANY ANNOUNCEMENT: {content} \n\nFormat your response like a typical journal article. Capture all relevant details contained in the announcement. You should favour more journalistic language and structure over technical jargon whilst providing a summary for the provided article. Avoid bullet points. Only information that is helpful for the beginner investor should be included. Context and tips for the beginner investor should also be included where relevant based on the information provided. Any advice given should not directly address the beginner investor. For example instead of: \"For beginner investors, acknowledging how and why these securities are issued without additional approvals can shed light on corporate governance practices.\" Use: \"Acknowledging how and why these securities are issued without additional approvals can shed light on corporate governance practices.\" Do not provide weblinks or urls. Only seperate paragraphs for clearly different ideas, and favour paragraph length over conciseness. Always use present perfect tense. For example instead of: \"Gold prices surged past $2,500 per ounce\" Use: \"Gold prices have surged past $2,500 per ounce\". Do not including any headings or subheadings in your summary.\n\nSUMMARY:"""''' 
-    
+
     if not prompt:
         if model == "o3-mini-2025-01-31":
             prompt = f"""Provide a comprehensive summary for the following announcement released from company {company}. This summary should be appropriate for a finance blog targeted towards beginner traders. The summary should include all relevant information from the announcement and be written in a journalistic style. The summary should be concise and informative, including all relevant technical indicators. Never refer to the article as a summary or concise overview. This article cannot include the ASX ticker in any way, only refer to the company by its' legal name (for example BHP GROUP LIMITED instead of ASX:BHP) Include a section for a bullish vs bearish sentiment based on the provided news. Format as rich text logically seperating into paragraphs based on typical journal structure, but do not include any subheadings or special formatting..\n\nCOMPANY ANNOUNCEMENT: {content}\n\nSUMMARY:"""
@@ -128,42 +78,48 @@ async def summarize_content(content: str, company: Optional[str] = "", model: Op
     
     prompt = prompt.replace("&lt;&lt;ARTICLE&gt;&gt", content)  
         
-    '''
-    response_a = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt_a},
-        ]
+    retry_count = 0
+    
+    client = AsyncClient(
+        api_key=config("OPENAI_KEY")
     )
     
-    response_b = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt_b},
-        ]
-    )
+    while retry_count < max_retries:
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ]
+            )
+                    
+            if response:
+                result = response.choices[0].message.content
+                await client.close()
+                return result
+                
+            last_error = "Empty response from API"
+            logger.warning(f"Empty API response (attempt {retry_count + 1}/{max_retries})")
+                
+        except TimeoutError:
+            last_error = "Request timed out"
+            logger.warning(f"Timeout occurred (attempt {retry_count + 1}/{max_retries})")
+        except openai.RateLimitError:
+            last_error = "Rate limit exceeded"
+            logger.warning(f"Rate limited (attempt {retry_count + 1}/{max_retries})")
+            await sleep(2 ** retry_count)  # Exponential backoff
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Unexpected error: {str(e)}")
+        finally:
+            if client:
+                await client.close()
+                
+        retry_count += 1
     
-    response_c = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt_c},
-        ]
-    )
-    '''
-    
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-    )
-    
-    summarized_content = response.choices[0].message.content
-    return summarized_content
+    logger.error(f"Failed to generate summary after {max_retries} requests: {last_error}")
+    return None
     
 def read_pdf(in_file: str) -> str:
     
