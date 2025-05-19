@@ -49,6 +49,7 @@ class CustomAsyncHandler(StreamHandler):
             "INFO": colorama.Fore.GREEN,
             "WARNING": colorama.Fore.YELLOW,
             "ERROR": colorama.Fore.RED,
+            "CRITICAL": colorama.Fore.MAGENTA
         }
         self._reset = colorama.Style.RESET_ALL
 
@@ -96,8 +97,6 @@ db = mongo_client["main"]
 documents = db["documents_new_2"]
 stocks = db["stocks"]
 articles = db["articles"]
-
-missing_stocks = []
 
 # check if s3 connection can be established
 try:
@@ -199,33 +198,53 @@ def _inside_trading_hours() -> bool:
     
     return False
 '''
-def collect_for_email() -> None:
-    collated_articles = list(articles.find({}))
-    email_list = []
 
-    for article in collated_articles:
-        email_list.append(article)
-    
+def collect_for_email() -> None:
+    logger.info("Starting email collection task.")
+
     try:
+        collated_articles = list(articles.find({}))
+        collated_articles.reverse() # have most recent first
+        logger.info(f"Fetched {len(collated_articles)} collated articles from the database.")
+
+        email_list = []
+        for article in collated_articles:
+            email_list.append(article)
+            
+
         mjml_src = email_template.render(articles=email_list)
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
 
         mailgun_key = os.getenv("MAILGUN_KEY")
+        if not mailgun_key:
+            logger.error("MAILGUN_KEY environment variable is missing. Cannot send email.")
+            return
 
         response = requests.post(
             "https://api.mailgun.net/v3/sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org/messages",
             auth=("api", mailgun_key),
-            data={"from": "Mailgun Sandbox <postmaster@sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org>",
+            data={
+                "from": "Mailgun Sandbox <postmaster@sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org>",
                 "to": "Eric Samuel <dev@dunelmenterprises.com.au>",
                 "subject": "RockStocks Updates",
-                "html": html_compiled})
-        
-        logger.info(f"Email sent successfully")
+                "html": html_compiled
+            }
+        )
+        logger.info(f"Mailgun response status: {response.status_code}")
+        if response.ok:
+            logger.info("Email sent successfully.")
+        else:
+            logger.error(f"Failed to send email. Response: {response.text}")
+
     except Exception as e:
-        logger.error(f"Error sending email: {e}")
-        
-    articles.delete_many({}) # clean for next email period
+        logger.exception(f"Exception occurred during email sending: {e}")
+
+    try:
+        result = articles.delete_many({})
+        logger.info(f"Successfully cleaned {result.deleted_count} collated articles from database")
+    except Exception as e:
+        logger.error(f"Error cleaning collated articles after email send: {e}")
 
 def reset_daily_announcements() -> None:
     offset = 0
@@ -513,6 +532,17 @@ def get_cover_image(industry_id: str) -> str:
 def _get_stock_id(ticker: str) -> str:
     stock = all_stocks.get(ticker)
     return stock["id"] if stock else None
+
+def _get_missing_stocks(file_path: str = "./data/missing_stocks.json") -> None:
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            missing_stocks = json.load(f)
+    else:
+        missing_stocks = {
+            "tickers": []
+        }
+        
+    return missing_stocks
         
 def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> str:
     
@@ -548,14 +578,7 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         return "success"
     else:
         missing_stocks_path = "./data/missing_stocks.json"
-
-        if os.path.exists(missing_stocks_path):
-            with open(missing_stocks_path, "r") as f:
-                missing_stocks = json.load(f)
-        else:
-            missing_stocks = {
-                "tickers": []
-            }
+        missing_stocks = _get_missing_stocks(missing_stocks_path)
         
         if ticker not in missing_stocks["tickers"]:
             missing_stocks["tickers"].append(ticker)
@@ -713,6 +736,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             '''
             
             generated = await generate_content(file_path, ticker)
+            
             sector_id = stock_data["sector"]
             industry_id = stock_data["industry"]
             industry_group_id = stock_data["industry_group"]
@@ -721,6 +745,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
+            
+            add_to_email(generated["short_title"], generated["email_summary"], cover_image, article_url) # moved up priority queue to ensure articles are properly added to the email collection
             
             logger.info("Attempting webflow upload...")
 
@@ -745,7 +771,6 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 
                 # Push the article to the collection
                 push_to_collection(collection_id, fieldData)
-                add_to_email(generated["short_title"], generated["email_summary"], cover_image, article_url)
                 await push_to_twitter(generated["short_title"], article_url)
             
             else:
@@ -856,9 +881,14 @@ async def process_announcement(announcement: dict) -> None:
     legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
     
     file_id = announcement.get("fileId", "")
+    document_url = announcement.get("documentURL", "")
     
     if not file_id:
         logger.error(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        return
+    
+    if not document_url:
+        logger.warning(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to missing document")
         return
 
     f_name = f"./{file_id}.pdf"
@@ -955,6 +985,11 @@ async def renew_announcements() -> None:
                     announcement_processing_tasks.append(announcement_task_wrapper(instance, progress_bar))
             
             await tqdm_asyncio.gather(*announcement_processing_tasks)
+            
+            missing_stocks = _get_missing_stocks()
+            missing_stocks = missing_stocks["tickers"]
+            logger.critical(f"During announcement processing, the following {len(missing_stocks)} tickers were referenced that do not exist. Suggest adding them to the environment: {missing_stocks}")
+            
     except Exception as e:
         logger.error(f"Unexpected error encountered when polling ASX announcements: {e}")
         
@@ -986,9 +1021,7 @@ async def lifespan(app: FastAPI):
     
     # Daily reset (23:30 on trading days)
     scheduler.add_job(
-        lambda: asyncio.get_event_loop().run_in_executor(
-            reset_executor, reset_daily_announcements
-        ),
+        reset_daily_announcements,
         "cron",
         day_of_week="mon,tue,wed,thu",
         hour=23,
@@ -999,9 +1032,7 @@ async def lifespan(app: FastAPI):
     
     # Email collection (09:00, 12:00 and 15:00 on trading days)
     scheduler.add_job(
-        lambda: asyncio.get_event_loop().run_in_executor(
-            email_executor, collect_for_email
-        ),
+        collect_for_email,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
         hour="9,12,17",
@@ -1022,4 +1053,5 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    collect_for_email()
