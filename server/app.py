@@ -204,7 +204,6 @@ def collect_for_email() -> None:
 
     try:
         collated_articles = list(articles.find({}))
-        collated_articles.reverse() # have most recent first
         logger.info(f"Fetched {len(collated_articles)} collated articles from the database.")
 
         email_list = []
