@@ -35,7 +35,7 @@ from unidecode import unidecode
 from dotenv import load_dotenv
 load_dotenv()
 
-jinja_env = Environment(loader=FileSystemLoader("./server/data/templates"))
+jinja_env = Environment(loader=FileSystemLoader("./data/templates"))
 email_template = jinja_env.get_template("email.mjml.j2")
 
 reset_executor = ThreadPoolExecutor(max_workers=1)
@@ -173,8 +173,8 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         
     return cached_collection
 
-all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
-all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
 
 if all_stocks and all_industries:
     logger.info("Successfully loaded all stocks and industries from cache")
@@ -547,7 +547,7 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
         
         return "success"
     else:
-        missing_stocks_path = "./server/data/missing_stocks.json"
+        missing_stocks_path = "./data/missing_stocks.json"
 
         if os.path.exists(missing_stocks_path):
             with open(missing_stocks_path, "r") as f:
