@@ -1,5 +1,6 @@
 import asyncio
 import holidays
+import json
 import os
 import pytz
 import random
@@ -45,6 +46,8 @@ documents = db["documents_new"]
 stocks = db["stocks"]
 articles = db["articles"]
 
+missing_stocks = []
+
 # check if s3 connection can be established
 try:
     s3_client = b3.client("s3",
@@ -67,6 +70,53 @@ except Exception as e:
     print(f"Error connecting to Twitter API: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
+
+def get_all_stocks() -> list:
+    
+    if os.path.exists("./server/data/all_stocks.json"):
+        with open("./server/data/all_stocks.json", "r") as f:
+            stocks_sorted = json.load(f)
+    
+    else:
+        
+        offset = 0
+        page_limit = 100
+        collected_all = False
+        all_items = []
+        announcement_collection_id = os.getenv("WEBFLOW_STOCK_COLLECTION_ID")
+
+        print("Beginning collection process....")
+
+        while not collected_all:
+            try:
+                response = requests.get(
+                f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
+                headers = {
+                    "Authorization": "Bearer " + access_token,
+                    "Content-Type": "application/json"
+                },
+                params = {
+                    "offset": offset
+                }
+            )
+                
+            except Exception as e:
+                print(f"Error fetching from webflow: {e}")
+
+            all_items.extend(response.json()["items"])
+            
+            if len(response.json()["items"]) < page_limit:
+                collected_all = True
+            else:
+                offset += page_limit
+        stocks_sorted = sorted(all_items, key=lambda x: x["fieldData"]["ticker"])
+        
+        with open("./server/data/all_stocks.json", "w") as f:
+            json.dump(stocks_sorted, f, indent = 4)
+        
+    return stocks_sorted
+
+all_stocks = get_all_stocks()
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -378,6 +428,13 @@ def get_cover_image(industry: str) -> str:
     
     return url
 
+def _get_stock_id(ticker: str) -> str:
+    for stock in all_stocks:
+        if stock["fieldData"]["ticker"] == ticker:
+            return stock["id"]
+        
+    return None
+        
 def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
@@ -390,24 +447,42 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     else:
         item_colour = "#FFFFFF"
     
-    company_id = search_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ASX:" + ticker)
+    stock_id = _get_stock_id(ticker)
     
-    fieldData = {
-        "name": hash,
-        "announcement-datetime": datetime,
-        "announcement-title": formal_title,
-        "announcement-company": ticker,
-        "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-        "market-sensitive": market_sensitive,
-        "cash-flow": is_cash_flow,
-        "substantial": is_substantial,
-        "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+    if stock_id:
+        fieldData = {
+            "name": hash,
+            "announcement-datetime": datetime,
+            "announcement-title": formal_title,
+            "announcement-company-2": stock_id,
+            "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+            "market-sensitive": market_sensitive,
+            "cash-flow": is_cash_flow,
+            "substantial": is_substantial,
+            "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+            
+        }
         
-    }
-    
-    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
-    
-    push_to_collection(announcement_collection_id, fieldData)
+        announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
+        
+        push_to_collection(announcement_collection_id, fieldData)
+    else:
+        print(f"ERROR: No stock found for ticker {ticker}, skipping....")
+
+        missing_stocks_path = "./server/data/missing_stocks.json"
+
+        if not os.path.isfile(missing_stocks_path):
+            with open(missing_stocks_path, "w") as f:
+                json.dump([], f)
+        
+        with open(missing_stocks_path) as f:
+            stock_not_found = json.load(f)
+        
+        if ticker not in [item["ticker"] for item in stock_not_found]:
+            stock_not_found.append({"ticker": ticker})
+            with open(missing_stocks_path, "w") as f:
+                json.dump(stock_not_found, f)
+        
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
