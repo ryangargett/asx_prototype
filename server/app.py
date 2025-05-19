@@ -594,6 +594,8 @@ def collect_for_email(article_title: str, article_summary: str, article_image: s
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     
+    tqdm.write(f"Beginning construction process for {file_path} {formal_title}....")
+    
     try:
         # Check if the article already exists in the site
         article_id = search_collection(collection_id, announcement_hash, "hash-value")
@@ -670,6 +672,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         # Clean up the temporary file
         if os.path.exists(file_path):
             os.remove(file_path)
+            
+        tqdm.write(f"Concluded construction process for {file_path} {formal_title}....")
 
     
         
@@ -794,8 +798,6 @@ async def renew_announcements() -> None:
         else:
             print(f"New announcements found, processing....")
             daily_announcements.reverse()
-            
-            daily_announcements = daily_announcements[:50]
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
