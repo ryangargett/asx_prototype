@@ -884,11 +884,11 @@ async def process_announcement(announcement: dict) -> None:
     document_url = announcement.get("documentURL", "")
     
     if not file_id:
-        logger.error(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to malformed content")
+        logger.error(f"Skipping announcement {announcement.get('id', 'N/A')} due to malformed content")
         return
     
     if not document_url:
-        logger.warning(f"Skipping announcement {announcement.get('dateTime', 'N/A')} due to missing document")
+        logger.warning(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to missing document")
         return
 
     f_name = f"./{file_id}.pdf"
@@ -973,7 +973,6 @@ async def renew_announcements() -> None:
             logger.info(f"No new announcements found since last poll, skipping....")
         else:
             logger.info(f"New announcements found, processing....")
-            daily_announcements.reverse()
             
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
