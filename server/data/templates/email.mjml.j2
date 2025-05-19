@@ -1,0 +1,89 @@
+<mjml>
+  <mj-head>
+    <mj-breakpoint width="600px" />
+    <mj-attributes>
+      <mj-all color="#2C2C2C" font-family="Arial" padding="0" />
+      <mj-class name="email-header" align="center" font-size="24px" font-weight="bold" line-height="20px" padding="30px 20px" />
+      <mj-class name="article-card" background-color="#ffffff" padding="20px" border-radius="10px" border="1px solid #dddddd" />
+      <mj-class name="article-text-content" padding="0 0 10px 20px" width="60%" />
+      <mj-class name="article-title" align="left" font-size="18px" font-weight="bold" line-height="24px" padding="0 0 10px 0" />
+      <mj-class name="article-summary" align="left" font-size="14px" line-height="19px" padding="0 0 10px 0" />
+    </mj-attributes>
+  </mj-head>
+
+  <mj-body background-color="#f5f5f5">
+    <!-- Email Header -->
+    <mj-wrapper padding="20px 20px">
+      <mj-section>
+        <mj-column>
+          <mj-text mj-class="email-header">
+            Hi Eric!
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <mj-section>
+        <mj-column>
+          <mj-text mj-class="email-header">
+            Here's what you've missed so far.... ⏰
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      {% for article in articles %}
+      <!-- Article Card -->
+      <mj-section mj-class="article-card">
+        <mj-group>
+          <mj-column width="40%">
+            <mj-image
+              src="{{ article.image }}"
+              href="{{ article.url }}"
+              alt="{{ article.title }}"
+              width="400px"
+              height="200px"
+              border-radius="20px"
+            />
+          </mj-column>
+          <mj-column mj-class="article-text-content">
+            <mj-text mj-class="article-title">
+              <a href="{{ article.url }}" style="color: #000000; text-decoration: none;">
+                {{ article.title }}
+              </a>
+            </mj-text>
+            <mj-text mj-class="article-summary">
+              {{ article.summary }}
+            </mj-text>
+          </mj-column>
+        </mj-group>
+      </mj-section>
+
+      <!-- Spacer -->
+      <mj-section>
+        <mj-column>
+          <mj-spacer height="20px" />
+        </mj-column>
+      </mj-section>
+      {% endfor %}
+
+      <!-- Footer -->
+      <mj-section padding="20px 40px" text-align="center">
+        <mj-column width="90%" vertical-align="middle">
+          <mj-text font-size="11px" color="#888888">
+            You are receiving this email because you subscribed to RockStocks daily updates.
+          </mj-text>
+        </mj-column>
+        <mj-column width="10%" vertical-align="middle">
+          <mj-image
+            src="https://rtwimages.s3.ap-southeast-2.amazonaws.com/LOGO.svg"
+            href="https://www.rockstocks.ai"
+            alt="Logo"
+            width="40px"
+            height="40px"
+            padding="0"
+          />
+        </mj-column>
+      </mj-section>
+
+    </mj-wrapper>
+  </mj-body>
+</mjml>
