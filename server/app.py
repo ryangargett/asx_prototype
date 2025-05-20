@@ -127,10 +127,8 @@ webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
     if os.path.exists(cache_path):
         with open(cache_path) as f:
-            cached_collection = json.load(f)
-    
+            cached_collection = json.load(f) 
     else:
-        
         offset = 0
         page_limit = 100
         collected_all = False
@@ -139,15 +137,15 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         while not collected_all:
             try:
                 response = requests.get(
-                f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
-                headers = {
-                    "Authorization": "Bearer " + access_token,
-                    "Content-Type": "application/json"
-                },
-                params = {
-                    "offset": offset
-                }
-            )
+                    f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
+                    headers = {
+                        "Authorization": "Bearer " + access_token,
+                        "Content-Type": "application/json"
+                    },
+                    params = {
+                        "offset": offset
+                    }
+                )
                 
                 items = response.json()["items"]
 
@@ -175,30 +173,36 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
 
 all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
 all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
+all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./data/cached_industry_groups.json")
 
-if all_stocks and all_industries:
+if all_stocks and all_industries and all_industry_groups:
     logger.info("Successfully loaded all stocks and industries from cache")
+    
+def get_legal_tickers() -> None:
+    if os.path.exists("./data/legal_tickers.json"):
+        with open("./data/legal_tickers.json") as f:
+            legal_tickers = json.load(f)
+    else:
+        legal_tickers = []
+        for stock in all_stocks:
+        
+            industry_group = None
+            
+            industry_group_id = all_stocks[stock]["fieldData"]["company-industry-group"]
+            industry_group = all_industry_groups[industry_group_id]["fieldData"]["name"]
+            if industry_group in ["Consumables", "Metals and Mining", "Renewables"]:
+                legal_tickers.append(all_stocks[stock]["fieldData"]["ticker"])
+                
+        with open("./data/legal_tickers.json", "w") as f:
+            json.dump(legal_tickers, f, indent = 4)
+            
+legal_tickers = get_legal_tickers()
+
+if legal_tickers:
+    logger.info("Successfully loaded legal tickers from cache")
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
-
-'''
-def _inside_trading_hours() -> bool:
-    try:
-        curr_time = _get_curr_time()
-        curr_time_format = curr_time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"Checking trading hours at {curr_time_format} AEST")
-        
-        non_trading_dates = holidays.Australia(years=curr_time.year, observed=True)
-    
-        if curr_time.weekday() < 5 and curr_time.date() not in non_trading_dates:
-            if curr_time.hour >= 10 and curr_time.hour <= 16:
-                return True
-    except Exception as e:
-        print(f"Error encountered when checking trading hours: {e}")
-    
-    return False
-'''
 
 def collect_for_email() -> None:
     logger.info("Starting email collection task.")
@@ -220,22 +224,31 @@ def collect_for_email() -> None:
         if not mailgun_key:
             logger.error("MAILGUN_KEY environment variable is missing. Cannot send email.")
             return
+        
+        emails = [
+            "dev@dunelmenterprises.com.au",
+            #"es@eveq.com",
+            #"rtwcapitaltrade@gmail.com"
+        ]
+        
+        for email in emails:
 
-        response = requests.post(
-            "https://api.mailgun.net/v3/sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org/messages",
-            auth=("api", mailgun_key),
-            data={
-                "from": "Mailgun Sandbox <postmaster@sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org>",
-                "to": "Eric Samuel <dev@dunelmenterprises.com.au>",
-                "subject": "RockStocks Updates",
-                "html": html_compiled
-            }
-        )
-        logger.info(f"Mailgun response status: {response.status_code}")
-        if response.ok:
-            logger.info("Email sent successfully.")
-        else:
-            logger.error(f"Failed to send email. Response: {response.text}")
+            response = requests.post(
+                "https://api.mailgun.net/v3/sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org/messages",
+                auth=("api", mailgun_key),
+                data={
+                    "from": "Mailgun Sandbox <postmaster@sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org>",
+                    "to": f"Eric Samuel <{email}>",
+                    "subject": "RockStocks Updates",
+                    "html": html_compiled
+                }
+            )
+            logger.info(f"Mailgun response status: {response.status_code}")
+            
+            if response.ok:
+                logger.info("Email sent successfully.")
+            else:
+                logger.error(f"Failed to send email. Response: {response.text}")
 
     except Exception as e:
         logger.exception(f"Exception occurred during email sending: {e}")
@@ -888,9 +901,7 @@ async def process_announcement(announcement: dict) -> None:
     }
     
     auth = (os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
-    
-    legal_tickers = ["29M", "A11", "A1M", "A4N", "AAI", "AAR", "ADT", "AEE", "AEL", "AGE", "AIS", "AKM", "ALD", "ALK", "AMC", "AMI", "ARR", "ARU", "ASL", "ATR", "AUC", "AVL", "AZY", "BC8", "BCI", "BCK", "BCN", "BGL", "BHP", "BIS", "BKW", "BKY", "BMN", "BOC", "BOE", "BPT", "BRE", "BRI", "BRL", "BSL", "BTR", "CAA", "CAY", "CHN", "CIA", "CMM", "COI", "CRD", "CRN", "CSC", "CTM", "CVN", "CVV", "CXO", "CYL", "DEG", "DGL", "DLI", "DRR", "DRX", "DVP", "DYL", "EEG", "EGR", "EMR", "ENR", "EQR", "ERA", "ETM", "EVN", "FEX", "FFM", "FMG", "GG8", "GMD", "GNG", "GOR", "GRR", "GRX", "HCH", "HRZ", "HZN", "IGO", "ILU", "IMA", "IMD", "INR", "IPL", "IPX", "JHX", "JMS", "KAR", "KCN", "KLL", "LCY", "LIN", "LLL", "LOT", "LRV", "LTR", "LYC", "MAC", "MAH", "MAU", "MDX", "MEI", "MEK", "MGX", "MIN", "MLX", "MM8", "MMI", "MRL", "NEM", "NHC", "NIC", "NMG", "NST", "NTU", "NUF", "NXG", "OBM", "OMA", "OMH", "ORA", "ORI", "ORN", "PDI", "PDN", "PEN", "PGH", "PLS", "PMT", "PNR", "POL", "PRG", "PRN", "PRU", "PTN", "PTR", "QGL", "QPM", "RHI", "RIO", "RMS", "RND", "RNU", "RRL", "RSG", "RXL", "S32", "SBM", "SFR", "SGM", "SMI", "SMR", "SPR", "STA", "STK", "STO", "STX", "SVL", "SVM", "SX2", "SYA", "SYR", "TBN", "TBR", "TCG", "TGM", "TLG", "TTM", "TTT", "TVN", "TZN", "USL", "VAU", "VEA", "VSL", "VUL", "VYS", "WA1", "WAF", "WC8", "WDS", "WGN", "WGX", "WHC", "WIA", "YAL", "ZIM"] 
-    
+     
     file_id = announcement.get("fileId", "")
     document_url = announcement.get("documentURL", "")
     
