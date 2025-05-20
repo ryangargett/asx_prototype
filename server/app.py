@@ -13,6 +13,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
+from dateutil.parser import parse
 from hashlib import sha256
 from logging import getLogger, LogRecord, Formatter, INFO, StreamHandler
 from pytz import timezone as tz
@@ -203,7 +204,7 @@ def collect_for_email() -> None:
     logger.info("Starting email collection task.")
 
     try:
-        collated_articles = list(articles.find({}))
+        collated_articles = list(articles.find({}).sort("datetime", -1))
         logger.info(f"Fetched {len(collated_articles)} collated articles from the database.")
 
         email_list = []
@@ -690,13 +691,24 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         
     return slug
 
-def add_to_email(article_title: str, article_summary: str, article_image: str, url: str) -> None:
-    articles.insert_one({
-        "title": article_title,
-        "summary": article_summary,
-        "image": article_image,
-        "url": url
-    })
+def add_to_email(article_title: str, article_summary: str, article_image: str, article_datetime: str, url: str) -> None:
+    
+    try:
+        formatted_datetime = parse(article_datetime)
+    except Exception as e:
+        logger.error(f"Error parsing article datetime: {e}")
+        return
+    
+    try:
+        articles.insert_one({
+            "title": article_title,
+            "summary": article_summary,
+            "image": article_image,
+            "datetime": formatted_datetime,
+            "url": url
+        })
+    except Exception as e:
+        logger.error(f"Error adding article to email database: {e}")
     
 async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
@@ -745,7 +757,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            add_to_email(generated["short_title"], generated["email_summary"], cover_image, article_url) # moved up priority queue to ensure articles are properly added to the email collection
+            add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
             
             logger.info("Attempting webflow upload...")
 
