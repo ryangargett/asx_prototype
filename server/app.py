@@ -204,7 +204,7 @@ def collect_for_email() -> None:
     logger.info("Starting email collection task.")
 
     try:
-        collated_articles = list(articles.find({}))
+        collated_articles = list(articles.find({}).sort("datetime", -1))
         logger.info(f"Fetched {len(collated_articles)} collated articles from the database.")
 
         email_list = []
@@ -924,6 +924,7 @@ async def process_announcement(announcement: dict) -> None:
             
             # generate formatted datetime for article stamp
             formatted_datetime = _format_datetime(announcement["dateTime"])
+            add_to_email(announcement["heading"], "test", "test", formatted_datetime, "test")
     
             is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
             is_substantial = True if "substantial" in announcement["heading"].lower() else False
