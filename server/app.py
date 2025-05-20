@@ -196,6 +196,8 @@ def get_legal_tickers() -> None:
         with open("./data/legal_tickers.json", "w") as f:
             json.dump(legal_tickers, f, indent = 4)
             
+    return legal_tickers
+            
 legal_tickers = get_legal_tickers()
 
 if legal_tickers:
