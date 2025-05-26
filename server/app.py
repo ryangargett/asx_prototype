@@ -681,14 +681,13 @@ def _get_industry_group(industry: str) -> str:
         return "Consumables" # default case]
 '''
     
-async def push_to_twitter(title: str, article_url: str) -> None:
+async def push_to_twitter(title: str, url: str, ticker: str, sector: str, exchange: str = "ASX") -> None:
     try:
-        if title and article_url:  
-            if len(title) > 130:
-                title = title[:127] + "..."
+        if title and url and ticker and sector:
+            content = " ".join([title, "#" + ticker, "#" + sector, "#" + exchange, f"\n\n{url}"])
 
             await twitter_client.create_tweet(
-                text = f"{title}\n\n{article_url}"
+                text = content
             )
         else:
             logger.error("Missing content needed for tweet")
@@ -797,7 +796,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 
                 # Push the article to the collection
                 push_to_collection(collection_id, fieldData)
-                await push_to_twitter(generated["short_title"], article_url)
+                industry_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
+                await push_to_twitter(generated["short_title"], article_url, ticker, industry_name)
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
