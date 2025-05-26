@@ -680,15 +680,36 @@ def _get_industry_group(industry: str) -> str:
     else:
         return "Consumables" # default case]
 '''
-    
-async def push_to_twitter(title: str, url: str, ticker: str, sector: str, exchange: str = "ASX") -> None:
-    try:
-        if title and url and ticker and sector:
-            content = " ".join([title, "#" + ticker, "#" + sector, "#" + exchange, f"\n\n{url}"])
 
-            await twitter_client.create_tweet(
-                text = content
-            )
+def _generate_hashtags(text: str) -> str:
+    text_components = text.split("and")
+    return " ".join([f"#{component.strip().replace(' ', '')}" for component in text_components])
+    
+async def push_to_twitter(
+    title: str,
+    url: str,
+    ticker: str,
+    industry: str,
+    industry_group: str,
+    exchange: str = "ASX"
+) -> None:
+    try:
+        if all([title, url, ticker, industry, industry_group]):
+            
+            hashtags = " ".join([
+                f"#{ticker}",
+                _generate_hashtags(industry),
+                _generate_hashtags(industry_group),
+                f"#{exchange}"
+            ])
+            
+            hashes = hashtags.split()
+            unique_hashes = set(hashes)
+            hashtags = " ".join(unique_hashes)
+            
+            content = f"{title}\n\n{hashtags}\n\n{url}"
+
+            await twitter_client.create_tweet(text=content)
         else:
             logger.error("Missing content needed for tweet")
     except Exception as e:
@@ -796,8 +817,13 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 
                 # Push the article to the collection
                 push_to_collection(collection_id, fieldData)
-                industry_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
-                await push_to_twitter(generated["short_title"], article_url, ticker, industry_name)
+                industry_name = all_industries[industry_id]["fieldData"]["name"]
+                industry_group_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
+                
+                if industry_group_name == "Metals and Mining":
+                    industry_group_name = "Mining"
+                
+                await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
