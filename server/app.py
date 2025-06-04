@@ -1229,6 +1229,6 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host="0.0.0.0", port=8000)
-    get_drill_score("41 m; [Copper 2.3 %, Gold 0.5 g/t]; 200 m")
-    plot_drill_modifier_heatmap()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #get_drill_score("41 m; [Copper 2.3 %, Gold 0.5 g/t]; 200 m")
+    #plot_drill_modifier_heatmap()
