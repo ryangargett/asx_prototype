@@ -3,6 +3,8 @@ import async_timeout
 import colorama
 import holidays
 import json
+import numpy as np
+import math
 import os
 import pytz
 import random
@@ -26,6 +28,7 @@ from asyncio import Semaphore
 import boto3 as b3
 from fastapi import FastAPI
 from jinja2 import Environment, FileSystemLoader
+import matplotlib.pyplot as plt
 from mjml import mjml_to_html
 from pymongo import MongoClient
 from tqdm import tqdm
@@ -37,7 +40,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 jinja_env = Environment(loader=FileSystemLoader("./data/templates"))
-email_template = jinja_env.get_template("email.mjml.j2")
+#email_template = jinja_env.get_template("email.mjml.j2")
 
 reset_executor = ThreadPoolExecutor(max_workers=1)
 email_executor = ThreadPoolExecutor(max_workers=1)
@@ -98,6 +101,7 @@ db = mongo_client["main"]
 documents = db["documents_new_2"]
 stocks = db["stocks"]
 articles = db["articles"]
+metals = db["metals"]
 
 # check if s3 connection can be established
 try:
@@ -171,9 +175,9 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         
     return cached_collection
 
-all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
-all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
-all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./data/cached_industry_groups.json")
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
+all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./server/data/cached_industry_groups.json")
 
 if all_stocks and all_industries and all_industry_groups:
     logger.info("Successfully loaded all stocks and industries from cache")
@@ -193,7 +197,7 @@ def get_legal_tickers() -> None:
             if industry_group in ["Consumables", "Metals and Mining", "Renewables"]:
                 legal_tickers.append(all_stocks[stock]["fieldData"]["ticker"])
                 
-        with open("./data/legal_tickers.json", "w") as f:
+        with open("./server/data/legal_tickers.json", "w") as f:
             json.dump(legal_tickers, f, indent = 4)
             
     return legal_tickers
@@ -932,79 +936,85 @@ async def process_announcement(announcement: dict) -> None:
      
     file_id = announcement.get("fileId", "")
     document_url = announcement.get("documentURL", "")
-    
-    if not file_id:
-        logger.error(f"Skipping announcement {announcement.get('id', 'N/A')} due to malformed content")
-        return
-    
-    if not document_url:
-        logger.warning(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to missing document")
-        return
 
     f_name = f"./{file_id}.pdf"
 
-    try: # check to see if document already exists in the database and is properly formed before downloading from API
-        if documents.find_one({"file_id": file_id}) is None:
-            async with asx_download_semaphore:
-                async with httpx.AsyncClient() as client:
-                    success = await download_document(client, announcement["documentURL"], f_name, headers = headers, auth = auth)
-                    if not success:
-                        _remove_file(f_name)
-                        return
-                            
-            announcement_hash = get_hash(f_name)
-            
-            try:
-                s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
-            except Exception as e:
-                logger.error(f"Failed uploading file to S3: {e}")
-                _remove_file(f_name)
-                return
-            
-            # generate formatted datetime for article stamp
-            formatted_datetime = _format_datetime(announcement["dateTime"])
-    
-            is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
-            is_substantial = True if "substantial" in announcement["heading"].lower() else False
+    if file_id != "" and document_url != "": 
+        try: # check to see if document already exists in the database and is properly formed before downloading from API
+            if documents.find_one({"file_id": file_id}) is None:
+                """
+                async with asx_download_semaphore:
+                    async with httpx.AsyncClient() as client:
+                        success = await download_document(client, announcement["documentURL"], f_name, headers = headers, auth = auth)
+                        if not success:
+                            _remove_file(f_name)
+                            return
+                """
                 
-            result = push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
-
-            #TODO: Improve filtering mechanism to avoid unnecessary uploads
-            if result:
-                if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                    logger.info("Discovered legal entry!")                                 
-                    asyncio.create_task(
-                        push_article_to_site(
-                            f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
-                        )
-                    )
-                else:
-                    _remove_file(f_name)
-            
-                documents.insert_one(
-                    {
-                        "file_id": announcement["fileId"],
-                        "title": announcement["heading"],
-                        "hash": announcement_hash,
-                        "date_released": announcement["dateTime"],
-                        "price_sensitive": announcement["isSensitive"],
-                        "linked_ticker": announcement["code"],
-                        "news_types": announcement["newsTypes"],
-                        "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
-                    }
+                response = requests.get(
+                    announcement["documentURL"], 
+                    headers=headers, 
+                    auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
                 )
-                    
-            else:
-                logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
-                _remove_file(f_name)
-        else:
-            logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
-            _remove_file(f_name)
             
-    except Exception as e:
-        logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
-        #logger.error(traceback.format_exc())
-        _remove_file(f_name)
+                with open(f_name, "wb") as f:
+                    f.write(response.content)
+                                
+                announcement_hash = get_hash(f_name)
+                
+                try:
+                    s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
+                except Exception as e:
+                    logger.error(f"Failed uploading file to S3: {e}")
+                    _remove_file(f_name)
+                    return
+                
+                # generate formatted datetime for article stamp
+                formatted_datetime = _format_datetime(announcement["dateTime"])
+        
+                is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
+                is_substantial = True if "substantial" in announcement["heading"].lower() else False
+                    
+                result = push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+
+                #TODO: Improve filtering mechanism to avoid unnecessary uploads
+                if result:
+                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                        logger.info("Discovered legal entry!")                                 
+                        asyncio.create_task(
+                            push_article_to_site(
+                                f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                            )
+                        )
+                    else:
+                        _remove_file(f_name)
+                
+                    documents.insert_one(
+                        {
+                            "file_id": announcement["fileId"],
+                            "title": announcement["heading"],
+                            "hash": announcement_hash,
+                            "date_released": announcement["dateTime"],
+                            "price_sensitive": announcement["isSensitive"],
+                            "linked_ticker": announcement["code"],
+                            "news_types": announcement["newsTypes"],
+                            "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                        }
+                    )
+                        
+                else:
+                    logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
+                    _remove_file(f_name)
+            else:
+                logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+                _remove_file(f_name)
+                
+        except Exception as e:
+            logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
+            #logger.error(traceback.format_exc())
+            _remove_file(f_name)
+    else:
+        logger.error(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to malformed content and / or missing document URL.")
                    
 async def renew_announcements() -> None:
 
@@ -1095,9 +1105,130 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+def _standardize_measurement(measurement: str, unit: str) -> float:
+    if unit == "ft":
+        return float(measurement) * 0.3048
+    elif unit == "%":
+        return float(measurement) * 10000
+    elif unit in ["m", "g/t"]:
+        return float(measurement)
+    else:
+        logger.warning(f"Received measurement with unknown unit {unit}, defaulting to metric")
+        return float(measurement)
+    
+def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, gxm_coeff: float = 0.25, depth_threshold: float = 75.0) -> float:
+    depth_modifier = 2 * math.exp(-depth / depth_threshold)
+
+    if gxm < gxm_threshold:
+        gxm_penalty = (gxm / gxm_threshold) ** 3 # penalize extremely small gxm discoveries
+    else:
+        gxm_penalty = 1
+        
+    gxm_reward = math.log1p(gxm) * gxm_coeff # ensure gxm doesn't overwhelm depth
+
+    modifier = depth_modifier * (gxm_reward * gxm_penalty)
+    # standardize modifier between 0 and 3
+
+    return modifier
+
+def plot_drill_modifier_heatmap():
+
+    # Create grid of depth and gxm values
+    depths = np.linspace(0, 300)     # Depths from 0 to 200 meters
+    gxms = np.linspace(0, 300)       # gxm from 0 to 100
+
+    # Compute modifier for each (gxm, depth) pair
+    modifier_grid = np.zeros((len(gxms), len(depths)))
+
+    for i, gxm in enumerate(gxms):
+        for j, depth in enumerate(depths):
+            modifier_grid[i, j] = calc_drill_modifier(gxm, depth)
+
+    # Plot
+    plt.figure(figsize=(10, 6))
+    cp = plt.contourf(depths, gxms, modifier_grid, levels=200, cmap='viridis')
+    plt.colorbar(cp, label='Modifier')
+    plt.xlabel('Drill Depth (m)')
+    plt.ylabel('AuEq gxm')
+    plt.title('Drill Modifier Heatmap')
+    plt.savefig("drill_modifier_heatmap.png", dpi=300, bbox_inches="tight")
+    plt.show()
+    
+def get_drill_score(result: str) -> None:
+    result_components = result.split("$$")
+    assay = result_components[0].strip() # ensure that only the assay is used in case of additional generation / hallucination
+    
+    assay_components = assay.split(";")
+    if assay_components[-1] == "":
+        assay_components = assay_components[:-1]
+    if len(assay_components) == 3:
+        drill_width = assay_components[0]
+        drill_width_components = drill_width.split(" ")
+        if len(drill_width_components) > 1:
+            drill_width_standardized = _standardize_measurement(drill_width_components[0].strip(), drill_width_components[1])
+        else:
+            logger.warning("Received assay with missing unit, defaulting to metric")
+            drill_width_standardized = _standardize_measurement(drill_width_components[0].strip(), "m")
+            
+        materials = assay_components[1].strip().replace("[", "").replace("]", "").split(",")
+        standardized_materials = {}
+        for material in materials:
+            material_components = material.strip().split(" ")
+            if len(material_components) == 3:
+                material_name = material_components[0].replace(":", "").strip()
+                standardized_materials[material_name] = _standardize_measurement(material_components[1].strip(), material_components[2].strip())
+                
+        drill_depth = assay_components[2].strip()
+        drill_depth_components = drill_depth.split(" ")
+        if len(drill_width_components) == 1:
+            if drill_depth.lower() not in ["eoh", "aircore"]:
+                logger.warning("Received assay with missing drill depth, defaulting to surface")
+            
+            drill_depth_standardized = 0.0
+        
+        else:
+            drill_depth_standardized = _standardize_measurement(drill_depth_components[0].strip(), drill_depth_components[1].strip())
+            
+        print(f"Drill width: {drill_width_standardized} m\nMaterials: {standardized_materials}\nDrill depth: {drill_depth_standardized} m")
+        
+        gold_doc = metals.find_one({"name": "Gold"})
+        gold_price = gold_doc["adjusted_price"] if gold_doc else 0
+
+        material_values = []
+
+        for material, value in standardized_materials.items():
+            metal_doc = metals.find_one({"name": material})
+            if metal_doc and "adjusted_price" in metal_doc:
+                material_value = round(metal_doc["adjusted_price"] * value, 4)
+            else:
+                logger.warning(f"Received assay with unknown material {material}, defaulting to gold")
+                material_value = round(gold_price * value, 4)
+
+            material_values.append(material_value)
+            
+        total_value = round(sum(material_values), 4)
+        gold_equivalent = round(total_value / gold_price, 4)
+        gxm = gold_equivalent * drill_width_standardized
+        drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
+        
+        print(f"Total value: {total_value}\nGold equivalent: {gxm}\nDrill score: {drill_score}")
+                
+            
+    else:
+        logger.warning("Received incomplete assay format, skipping....")
+
+async def get_drill_result(ticker: str, path: str) -> str:
+    content = read_pdf(path, 1)
+    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m.\n\nDOCUMENT: {content}"
+    summarized = await summarize_content(content, logger, ticker, prompt = prompt)
+    print(summarized)
+    get_drill_score(summarized)
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    get_drill_score("41 m; [Copper 2.3 %, Gold 0.5 g/t]; 200 m")
+    plot_drill_modifier_heatmap()
