@@ -40,7 +40,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 jinja_env = Environment(loader=FileSystemLoader("./data/templates"))
-#email_template = jinja_env.get_template("email.mjml.j2")
+email_template = jinja_env.get_template("email.mjml.j2")
 
 reset_executor = ThreadPoolExecutor(max_workers=1)
 email_executor = ThreadPoolExecutor(max_workers=1)
@@ -178,6 +178,17 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
 all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
 all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
 all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./server/data/cached_industry_groups.json")
+
+def _get_missing_stocks(file_path: str = "./data/missing_stocks.json") -> None:
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            missing_stocks = json.load(f)
+    else:
+        missing_stocks = {
+            "tickers": []
+        }
+        
+    return missing_stocks
 
 if all_stocks and all_industries and all_industry_groups:
     logger.info("Successfully loaded all stocks and industries from cache")
@@ -551,19 +562,8 @@ def get_cover_image(industry_id: str) -> str:
 def _get_stock_id(ticker: str) -> str:
     stock = all_stocks.get(ticker)
     return stock["id"] if stock else None
-
-def _get_missing_stocks(file_path: str = "./data/missing_stocks.json") -> None:
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            missing_stocks = json.load(f)
-    else:
-        missing_stocks = {
-            "tickers": []
-        }
         
-    return missing_stocks
-        
-def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> str:
+def push_announcement_to_site(hash: str, datetime: str, stock_id: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
     
     #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
     
@@ -575,37 +575,22 @@ def push_announcement_to_site(hash: str, datetime: str, ticker: str, formal_titl
     else:
         item_colour = "#FFFFFF"
     
-    stock_id = _get_stock_id(ticker)
+
+    fieldData = {
+        "name": hash,
+        "announcement-datetime": datetime,
+        "announcement-title": formal_title,
+        "announcement-company-2": stock_id,
+        "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
+        "market-sensitive": market_sensitive,
+        "cash-flow": is_cash_flow,
+        "substantial": is_substantial,
+        "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
+        
+    }
     
-    if stock_id:
-        fieldData = {
-            "name": hash,
-            "announcement-datetime": datetime,
-            "announcement-title": formal_title,
-            "announcement-company-2": stock_id,
-            "announcement-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{hash}.pdf",
-            "market-sensitive": market_sensitive,
-            "cash-flow": is_cash_flow,
-            "substantial": is_substantial,
-            "item-colour": item_colour, # there's probably a way better way of doing this, but it works so I'm keeping it for now
-            
-        }
-        
-        announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
-        push_to_collection(announcement_collection_id, fieldData)
-        
-        return "success"
-    else:
-        missing_stocks_path = "./data/missing_stocks.json"
-        missing_stocks = _get_missing_stocks(missing_stocks_path)
-        
-        if ticker not in missing_stocks["tickers"]:
-            missing_stocks["tickers"].append(ticker)
-        
-        with open(missing_stocks_path, "w") as f:
-            json.dump(missing_stocks, f, indent=4)
-            
-        return None
+    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
+    push_to_collection(announcement_collection_id, fieldData)
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
@@ -919,6 +904,24 @@ async def download_document(
                 return False
             await asyncio.sleep(2 * attempt)
             
+def validate_stock(ticker: str) -> str:
+    
+    stock_id = _get_stock_id()
+    
+    if stock_id:
+        return stock_id
+    else:
+        missing_stocks_path = "./data/missing_stocks.json"
+        missing_stocks = _get_missing_stocks(missing_stocks_path)
+        
+        if ticker not in missing_stocks["tickers"]:
+            missing_stocks["tickers"].append(ticker)
+        
+        with open(missing_stocks_path, "w") as f:
+            json.dump(missing_stocks, f, indent=4)
+            
+        return None
+                
 async def process_announcement(announcement: dict) -> None:
     """
     This function processes an individual announcement concurrently by validating,
@@ -938,81 +941,90 @@ async def process_announcement(announcement: dict) -> None:
     document_url = announcement.get("documentURL", "")
 
     f_name = f"./{file_id}.pdf"
+    
+    missing_stocks = _get_missing_stocks()
+    missing_stocks = missing_stocks["stocks"]
 
-    if file_id != "" and document_url != "": 
-        try: # check to see if document already exists in the database and is properly formed before downloading from API
-            if documents.find_one({"file_id": file_id}) is None:
-                """
-                async with asx_download_semaphore:
-                    async with httpx.AsyncClient() as client:
-                        success = await download_document(client, announcement["documentURL"], f_name, headers = headers, auth = auth)
-                        if not success:
-                            _remove_file(f_name)
-                            return
-                """
-                
-                response = requests.get(
-                    announcement["documentURL"], 
-                    headers=headers, 
-                    auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
-                )
-            
-                with open(f_name, "wb") as f:
-                    f.write(response.content)
-                                
-                announcement_hash = get_hash(f_name)
-                
-                try:
-                    s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
-                except Exception as e:
-                    logger.error(f"Failed uploading file to S3: {e}")
-                    _remove_file(f_name)
-                    return
-                
-                # generate formatted datetime for article stamp
-                formatted_datetime = _format_datetime(announcement["dateTime"])
+    if file_id != "" and document_url != "":
         
-                is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
-                is_substantial = True if "substantial" in announcement["heading"].lower() else False
+        stock_id = validate_stock(announcement.get("code", ""))
+        
+        if stock_id:
+            try: # check to see if document already exists in the database and is properly formed before downloading from API
+                if documents.find_one({"file_id": file_id}) is None:
+                    """
+                    async with asx_download_semaphore:
+                        async with httpx.AsyncClient() as client:
+                            success = await download_document(client, announcement["documentURL"], f_name, headers = headers, auth = auth)
+                            if not success:
+                                _remove_file(f_name)
+                                return
+                    """
                     
-                result = push_announcement_to_site(announcement_hash, formatted_datetime, announcement["code"], announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
-
-                #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                if result:
-                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                        logger.info("Discovered legal entry!")                                 
-                        asyncio.create_task(
-                            push_article_to_site(
-                                f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
-                            )
-                        )
-                    else:
-                        _remove_file(f_name)
-                
-                    documents.insert_one(
-                        {
-                            "file_id": announcement["fileId"],
-                            "title": announcement["heading"],
-                            "hash": announcement_hash,
-                            "date_released": announcement["dateTime"],
-                            "price_sensitive": announcement["isSensitive"],
-                            "linked_ticker": announcement["code"],
-                            "news_types": announcement["newsTypes"],
-                            "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
-                        }
+                    response = requests.get(
+                        announcement["documentURL"], 
+                        headers=headers, 
+                        auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
                     )
-                        
-                else:
-                    logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
-                    _remove_file(f_name)
-            else:
-                logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
-                _remove_file(f_name)
                 
-        except Exception as e:
-            logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
-            #logger.error(traceback.format_exc())
-            _remove_file(f_name)
+                    with open(f_name, "wb") as f:
+                        f.write(response.content)
+                                    
+                    announcement_hash = get_hash(f_name)
+                    
+                    try:
+                        s3_client.upload_file(f_name, "rtwasxreports", f"{announcement_hash}.pdf", ExtraArgs={"ContentType": "application/pdf"})
+                    except Exception as e:
+                        logger.error(f"Failed uploading file to S3: {e}")
+                        _remove_file(f_name)
+                        return
+                    
+                    # generate formatted datetime for article stamp
+                    formatted_datetime = _format_datetime(announcement["dateTime"])
+            
+                    is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
+                    is_substantial = True if "substantial" in announcement["heading"].lower() else False
+                        
+                    result = push_announcement_to_site(announcement_hash, formatted_datetime, stock_id, announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+
+                    #TODO: Improve filtering mechanism to avoid unnecessary uploads
+                    if result:
+                        if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                            logger.info("Discovered legal entry!")                                 
+                            asyncio.create_task(
+                                push_article_to_site(
+                                    f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                                )
+                            )
+                        else:
+                            _remove_file(f_name)
+                    
+                        documents.insert_one(
+                            {
+                                "file_id": announcement["fileId"],
+                                "title": announcement["heading"],
+                                "hash": announcement_hash,
+                                "date_released": announcement["dateTime"],
+                                "price_sensitive": announcement["isSensitive"],
+                                "linked_ticker": announcement["code"],
+                                "news_types": announcement["newsTypes"],
+                                "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                            }
+                        )
+                            
+                    else:
+                        logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
+                        _remove_file(f_name)
+                else:
+                    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
+                    _remove_file(f_name)
+                    
+            except Exception as e:
+                logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
+                #logger.error(traceback.format_exc())
+                _remove_file(f_name)
+        else:
+            logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
     else:
         logger.error(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to malformed content and / or missing document URL.")
                    
