@@ -906,7 +906,7 @@ async def download_document(
             
 def validate_stock(ticker: str) -> str:
     
-    stock_id = _get_stock_id()
+    stock_id = _get_stock_id(ticker)
     
     if stock_id:
         return stock_id
@@ -941,9 +941,6 @@ async def process_announcement(announcement: dict) -> None:
     document_url = announcement.get("documentURL", "")
 
     f_name = f"./{file_id}.pdf"
-    
-    missing_stocks = _get_missing_stocks()
-    missing_stocks = missing_stocks["stocks"]
 
     if file_id != "" and document_url != "":
         
