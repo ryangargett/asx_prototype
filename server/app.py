@@ -175,9 +175,9 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
         
     return cached_collection
 
-all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./server/data/cached_stocks.json")
-all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./server/data/cached_industries.json")
-all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./server/data/cached_industry_groups.json")
+all_stocks = cache_collection(os.getenv("WEBFLOW_STOCK_COLLECTION_ID"), "ticker", "./data/cached_stocks.json")
+all_industries = cache_collection(os.getenv("WEBFLOW_INDUSTRY_COLLECTION_ID"), "id", "./data/cached_industries.json")
+all_industry_groups = cache_collection(os.getenv("WEBFLOW_INDUSTRY_GROUP_COLLECTION_ID"), "id", "./data/cached_industry_groups.json")
 
 def _get_missing_stocks(file_path: str = "./data/missing_stocks.json") -> None:
     if os.path.exists(file_path):
@@ -208,7 +208,7 @@ def get_legal_tickers() -> None:
             if industry_group in ["Consumables", "Metals and Mining", "Renewables"]:
                 legal_tickers.append(all_stocks[stock]["fieldData"]["ticker"])
                 
-        with open("./server/data/legal_tickers.json", "w") as f:
+        with open("./data/legal_tickers.json", "w") as f:
             json.dump(legal_tickers, f, indent = 4)
             
     return legal_tickers
@@ -982,44 +982,38 @@ async def process_announcement(announcement: dict) -> None:
                     is_cash_flow = True if (("cash" in announcement["heading"].lower()) or ("cashflow" in announcement["heading"].lower())) else False
                     is_substantial = True if "substantial" in announcement["heading"].lower() else False
                         
-                    result = push_announcement_to_site(announcement_hash, formatted_datetime, stock_id, announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
+                    push_announcement_to_site(announcement_hash, formatted_datetime, stock_id, announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
 
                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                    if result:
-                        if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
-                            logger.info("Discovered legal entry!")                                 
-                            asyncio.create_task(
-                                push_article_to_site(
-                                    f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
-                                )
+                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                        logger.info("Discovered legal entry!")                                 
+                        asyncio.create_task(
+                            push_article_to_site(
+                                f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
                             )
-                        else:
-                            _remove_file(f_name)
-                    
-                        documents.insert_one(
-                            {
-                                "file_id": announcement["fileId"],
-                                "title": announcement["heading"],
-                                "hash": announcement_hash,
-                                "date_released": announcement["dateTime"],
-                                "price_sensitive": announcement["isSensitive"],
-                                "linked_ticker": announcement["code"],
-                                "news_types": announcement["newsTypes"],
-                                "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
-                            }
                         )
-                            
                     else:
-                        logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")
                         _remove_file(f_name)
-                else:
-                    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")
-                    _remove_file(f_name)
+                
+                    documents.insert_one(
+                        {
+                            "file_id": announcement["fileId"],
+                            "title": announcement["heading"],
+                            "hash": announcement_hash,
+                            "date_released": announcement["dateTime"],
+                            "price_sensitive": announcement["isSensitive"],
+                            "linked_ticker": announcement["code"],
+                            "news_types": announcement["newsTypes"],
+                            "prev_ticker": announcement["releaseCode"] if announcement.get("releaseCode", "") != "" else "N/A",
+                        }
+                    )
                     
+                else:
+                    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
             except Exception as e:
                 logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
                 #logger.error(traceback.format_exc())
-                _remove_file(f_name)
+                _remove_file(f_name)     
         else:
             logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
     else:
@@ -1054,7 +1048,7 @@ async def renew_announcements() -> None:
             
             missing_stocks = _get_missing_stocks()
             missing_stocks = missing_stocks["tickers"]
-            logger.critical(f"During announcement processing, the following {len(missing_stocks)} tickers were referenced that do not exist. Suggest adding them to the environment: {missing_stocks}")
+            logger.critical(f"During announcement processing, the following {len(missing_stocks)} tickers were referenced that do not exist. Suggest adding them to the environment: {sorted(missing_stocks)}")
             
     except Exception as e:
         logger.error(f"Unexpected error encountered when polling ASX announcements: {e}")
@@ -1238,6 +1232,9 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    missing_stocks = _get_missing_stocks()
+    missing_stocks = missing_stocks["tickers"]
+    logger.critical(f"During announcement processing, the following {len(missing_stocks)} tickers were referenced that do not exist. Suggest adding them to the environment: {sorted(missing_stocks)}")
     #get_drill_score("41 m; [Copper 2.3 %, Gold 0.5 g/t]; 200 m")
     #plot_drill_modifier_heatmap()
