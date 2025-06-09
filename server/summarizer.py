@@ -30,10 +30,12 @@ async def summarize_content(
     content: str,
     logger: Logger,
     company: Optional[str] = "", 
-    model: Optional[str] = "o3-mini-2025-01-31", 
+    model: Optional[str] = "o3-mini-2025-01-31",
+    system_prompt: Optional[str] = None,
     prompt: Optional[str] = None) -> dict:
     
-    system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
+    if not system_prompt:
+        system_prompt = """You are a highly intelligent AI assistant trained to write journal articles on technical topics."""
 
     if not prompt:
         if model == "o3-mini-2025-01-31":
@@ -61,12 +63,14 @@ async def summarize_content(
     else:
         return None
     
-def read_pdf(in_file: str) -> str:
+def read_pdf(in_file: str, page_limit: int = None) -> str:
     
     reader = PdfReader(in_file)
     page_content = ""
     
-    for idx, page in enumerate(reader.pages):
+    pages = reader.pages[:page_limit] if page_limit is not None else reader.pages
+    
+    for idx, page in enumerate(pages):
         page_content += f"\n**PAGE {idx + 1} CONTENT:**\n" + page.extract_text().strip()
         
     return page_content
