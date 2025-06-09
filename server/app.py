@@ -251,10 +251,10 @@ def collect_for_email() -> None:
         for email in emails:
 
             response = requests.post(
-                "https://api.mailgun.net/v3/sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org/messages",
+                "https://api.mailgun.net/v3/rockstocks.ai/messages",
                 auth=("api", mailgun_key),
                 data={
-                    "from": "Mailgun Sandbox <postmaster@sandboxbc8c028db9ae4488860adcc36c74d11b.mailgun.org>",
+                    "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
                     "to": f"Eric Samuel <{email}>",
                     "subject": "RockStocks Updates",
                     "html": html_compiled
@@ -1119,8 +1119,8 @@ def _standardize_measurement(measurement: str, unit: str) -> float:
         logger.warning(f"Received measurement with unknown unit {unit}, defaulting to metric")
         return float(measurement)
     
-def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, gxm_coeff: float = 0.25, depth_threshold: float = 75.0) -> float:
-    depth_modifier = 2 * math.exp(-depth / depth_threshold)
+def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, gxm_coeff: float = 0.5, depth_threshold: float = 500.0) -> float:
+    depth_modifier = 1 / (1 + math.exp((depth - depth_threshold) / 100))
 
     if gxm < gxm_threshold:
         gxm_penalty = (gxm / gxm_threshold) ** 3 # penalize extremely small gxm discoveries
@@ -1128,16 +1128,16 @@ def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, g
         gxm_penalty = 1
         
     gxm_reward = math.log1p(gxm) * gxm_coeff # ensure gxm doesn't overwhelm depth
+    
 
     modifier = depth_modifier * (gxm_reward * gxm_penalty)
-    # standardize modifier between 0 and 3
 
     return modifier
 
 def plot_drill_modifier_heatmap():
 
     # Create grid of depth and gxm values
-    depths = np.linspace(0, 300)     # Depths from 0 to 200 meters
+    depths = np.linspace(0, 500)     # Depths from 0 to 200 meters
     gxms = np.linspace(0, 300)       # gxm from 0 to 100
 
     # Compute modifier for each (gxm, depth) pair
@@ -1212,18 +1212,18 @@ def get_drill_score(result: str) -> None:
         total_value = round(sum(material_values), 4)
         gold_equivalent = round(total_value / gold_price, 4)
         gxm = gold_equivalent * drill_width_standardized
-        drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
+        #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
+        drill_score = gxm #TODO: Eventually work in modifier once client is happy
         
         print(f"Total value: {total_value}\nGold equivalent: {gxm}\nDrill score: {drill_score}")
-                
-            
     else:
         logger.warning("Received incomplete assay format, skipping....")
 
 async def get_drill_result(ticker: str, path: str) -> str:
     content = read_pdf(path, 1)
+    system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
     prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m.\n\nDOCUMENT: {content}"
-    summarized = await summarize_content(content, logger, ticker, prompt = prompt)
+    summarized = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
     print(summarized)
     get_drill_score(summarized)
 
@@ -1232,9 +1232,8 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host="0.0.0.0", port=8000)
-    missing_stocks = _get_missing_stocks()
-    missing_stocks = missing_stocks["tickers"]
-    logger.critical(f"During announcement processing, the following {len(missing_stocks)} tickers were referenced that do not exist. Suggest adding them to the environment: {sorted(missing_stocks)}")
-    #get_drill_score("41 m; [Copper 2.3 %, Gold 0.5 g/t]; 200 m")
-    #plot_drill_modifier_heatmap()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
+    #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
+    #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
+    #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
