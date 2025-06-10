@@ -193,6 +193,12 @@ def _get_missing_stocks(file_path: str = "./data/missing_stocks.json") -> None:
 if all_stocks and all_industries and all_industry_groups:
     logger.info("Successfully loaded all stocks and industries from cache")
     
+mailgun_key = os.getenv("MAILGUN_KEY")
+if not mailgun_key:
+    logger.error("MAILGUN_KEY environment variable is missing. Cannot send email.")
+else:
+    logger.info("Successfully loaded mailgun key from cache")
+    
 def get_legal_tickers() -> None:
     if os.path.exists("./data/legal_tickers.json"):
         with open("./data/legal_tickers.json") as f:
@@ -221,6 +227,24 @@ if legal_tickers:
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
 
+def email_content(recipient_email: str, content: str, title: str) -> None:
+    response = requests.post(
+                "https://api.mailgun.net/v3/rockstocks.ai/messages",
+                auth=("api", mailgun_key),
+                data={
+                    "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
+                    "to": f"Eric Samuel <{recipient_email}>",
+                    "subject": title,
+                    "html": content
+                }
+            )
+    logger.info(f"Mailgun response status: {response.status_code}")
+    
+    if response.ok:
+        logger.info("Email sent successfully.")
+    else:
+        logger.error(f"Failed to send email. Response: {response.text}")
+
 def collect_for_email() -> None:
     logger.info("Starting email collection task.")
 
@@ -236,36 +260,16 @@ def collect_for_email() -> None:
         mjml_src = email_template.render(articles=email_list)
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
-
-        mailgun_key = os.getenv("MAILGUN_KEY")
-        if not mailgun_key:
-            logger.error("MAILGUN_KEY environment variable is missing. Cannot send email.")
-            return
         
         emails = [
             "dev@dunelmenterprises.com.au",
-            #"es@eveq.com",
-            #"rtwcapitaltrade@gmail.com"
+            "es@eveq.com",
+            "rtwcapitaltrade@gmail.com"
         ]
         
         for email in emails:
+            email_content(email, html_compiled, "Daily Stock Updates")
 
-            response = requests.post(
-                "https://api.mailgun.net/v3/rockstocks.ai/messages",
-                auth=("api", mailgun_key),
-                data={
-                    "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
-                    "to": f"Eric Samuel <{email}>",
-                    "subject": "RockStocks Updates",
-                    "html": html_compiled
-                }
-            )
-            logger.info(f"Mailgun response status: {response.status_code}")
-            
-            if response.ok:
-                logger.info("Email sent successfully.")
-            else:
-                logger.error(f"Failed to send email. Response: {response.text}")
 
     except Exception as e:
         logger.exception(f"Exception occurred during email sending: {e}")
@@ -813,6 +817,10 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                     industry_group_name = "Mining"
                 
                 await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
+                drill_results = await get_drill_result(ticker, file_path)
+                if results["drill_result"]:
+                    # do stuff here
+                    pass
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
@@ -985,7 +993,7 @@ async def process_announcement(announcement: dict) -> None:
                     push_announcement_to_site(announcement_hash, formatted_datetime, stock_id, announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
 
                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers:
+                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers and "11001" in announcement.get("newsTypes", []):
                         logger.info("Discovered legal entry!")                                 
                         asyncio.create_task(
                             push_article_to_site(
@@ -1157,7 +1165,10 @@ def plot_drill_modifier_heatmap():
     plt.savefig("drill_modifier_heatmap.png", dpi=300, bbox_inches="tight")
     plt.show()
     
-def get_drill_score(result: str) -> None:
+def get_drill_score(result: str) -> float:
+    
+    drill_score = 0.0
+    
     result_components = result.split("$$")
     assay = result_components[0].strip() # ensure that only the assay is used in case of additional generation / hallucination
     
@@ -1218,22 +1229,57 @@ def get_drill_score(result: str) -> None:
         print(f"Total value: {total_value}\nGold equivalent: {gxm}\nDrill score: {drill_score}")
     else:
         logger.warning("Received incomplete assay format, skipping....")
+    
+    return drill_score
 
-async def get_drill_result(ticker: str, path: str) -> str:
+async def get_drill_result(path: str, ticker: str, score_threshold: float = 80.0) -> dict:
+    results = {
+        "drill_score": 0.0,
+        "drill_result": None
+    }
+    
     content = read_pdf(path, 1)
+    
     system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
     prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m.\n\nDOCUMENT: {content}"
+    
     summarized = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-    print(summarized)
-    get_drill_score(summarized)
+    
+    results["drill_score"] = get_drill_score(summarized)
+    if results["drill_score"] > score_threshold:
+
+        full_content = read_pdf(path)
+        
+        results["drill_result"] = {
+            "technical": "",
+            "investor": ""
+        }
+        
+        system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements and provide detailed technical summaries."
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report including the most significant drill assays. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. \n\nDOCUMENT: {full_content}"
+        
+        logger.info(f"Constructing detailed technical summary for {ticker}")
+        
+        summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        
+        results["drill_result"]["technical"] = summarized
+        
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader').\n\nDOCUMENT: {full_content}"
+        
+        summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        
+        results["drill_result"]["investor"] = summarized
+    return results
 
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-    #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    results = asyncio.run(get_drill_result("./6A1266088.pdf", "CNB"))
+    print(results["drill_result"]["technical"])
+    print(results["drill_result"]["investor"])
     #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
     #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
     #asyncio.run(get_drill_result("CNB","./6A1266088.pdf"))
