@@ -28,7 +28,7 @@
       <mj-section>
         <mj-column>
           <mj-text mj-class="email-header">
-            ⚠️Our systems detected a potentially significant announcement from {{ company }}⚠️
+            ⚠️Our systems detected a potentially significant announcement from {{ article_meta.company }}⚠️
           </mj-text>
         </mj-column>
       </mj-section>
@@ -37,7 +37,7 @@
       <mj-section mj-class="alert-title-card">
         <mj-column>
           <mj-text mj-class="alert-title">
-            {{ alert_meta.title }}
+            {{ alert_meta.drill_results.title }}
           </mj-text>
         </mj-column>
       </mj-section>
@@ -52,10 +52,46 @@
       <mj-section mj-class="alert-card">
         <mj-column>
           <mj-text mj-class="alert-heading">
-            Best Result: {{ gxm }} GxM
+            Best Result: {{ alert_meta.drill_score }} GxM
           </mj-text>
           <mj-text mj-class="alert-text">
             {{ assay }}
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Spacer -->
+      <mj-section>
+        <mj-column>
+          <mj-spacer height="20px" />
+        </mj-column>
+      </mj-section>
+
+      <mj-section mj-class="alert-card">
+        <mj-column>
+          <mj-text mj-class="alert-heading">
+            Market Cap:
+          </mj-text>
+          <mj-text mj-class="alert-text">
+            {{ market_cap }}
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Spacer -->
+      <mj-section>
+        <mj-column>
+          <mj-spacer height="20px" />
+        </mj-column>
+      </mj-section>
+
+      <mj-section mj-class="alert-card">
+        <mj-column>
+          <mj-text mj-class="alert-heading">
+            Report Type:
+          </mj-text>
+          <mj-text mj-class="alert-text">
+            {{ report_type }}
           </mj-text>
         </mj-column>
       </mj-section>
@@ -73,14 +109,14 @@
             Technical Summary
           </mj-text>
           <mj-text mj-class="alert-description">
-            {{ alert_meta.technical_summary }}
+            {{ alert_meta.drill_results.technical }}
           </mj-text>
 
           <mj-text mj-class="alert-subheading">
             Investor Summary
           </mj-text>
           <mj-text mj-class="alert-description">
-            {{ alert_meta.investor_summary }}
+            {{ alert_meta.drill_results.investor }}
           </mj-text>
         </mj-column>
       </mj-section>
