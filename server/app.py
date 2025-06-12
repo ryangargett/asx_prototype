@@ -761,7 +761,7 @@ def _format_assay(drill_metrics: dict) -> str:
     logger.info(formatted_assay)
     return formatted_assay
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 20000000) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e10) -> str:
     results = await get_drill_result(file_path, ticker)
     
     if results:
@@ -802,10 +802,10 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     
     try:
         # Check if the article already exists in the site
-        #article_id = search_collection(collection_id, announcement_hash, "hash-value", suppress_warning=True)
-        #if article_id:
-        #    logger.warning(f"Attempted publication failed due to pre-existing article on website, skipping....")
-        #    return
+        article_id = search_collection(collection_id, announcement_hash, "hash-value", suppress_warning=True)
+        if article_id:
+            logger.warning(f"Attempted publication failed due to pre-existing article on website, skipping....")
+            return
         
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
@@ -842,22 +842,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            #add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
-            
-            announcement_type = await get_announcement_type(file_path, ticker)
-            if announcement_type.strip() != "N/A":
-                
-                article_meta = {
-                    "title": generated["short_title"],
-                    "url": article_url,
-                    "company": stock_data["name"],
-                    "image": cover_image,
-                    "summary": generated["email_summary"]
-                }
-                
-                await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
-            else:
-                logger.warning("Received poorly formatted drill result, skipping alert....")
+            add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
             
             logger.info("Attempting webflow upload...")
 
@@ -881,14 +866,30 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 }
                 
                 # Push the article to the collection
-                #push_to_collection(collection_id, fieldData)
+                push_to_collection(collection_id, fieldData)
                 industry_name = all_industries[industry_id]["fieldData"]["name"]
                 industry_group_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
+                
+                announcement_type = await get_announcement_type(file_path, ticker)
+                if announcement_type.strip() != "N/A":
+                    
+                    article_meta = {
+                        "title": generated["short_title"],
+                        "url": article_url,
+                        "company": stock_data["name"],
+                        "image": cover_image,
+                        "summary": generated["email_summary"]
+                    }
+                
+                    await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
+                else:
+                    logger.warning("Received poorly formatted drill result, skipping alert....")
                 
                 if industry_group_name == "Metals and Mining":
                     industry_group_name = "Mining"
                 
-                #await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
+                await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
+            
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
@@ -1135,55 +1136,7 @@ async def renew_announcements() -> None:
             if curr_time.hour >= 23 and curr_time.minute >= 30:
                 logger.warning(f"End of trading day, resetting announcements....")
                 reset_daily_announcements()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    
-    logger.info("Starting FastAPI application...")
-    
-    scheduler = AsyncIOScheduler(
-        timezone = "Australia/Sydney"
-    )
-    
-    # ASX Announcement polling (trading days only)
-    scheduler.add_job(
-        renew_announcements,
-        "cron",
-        day_of_week="mon,tue,wed,thu,fri",
-        hour="7-17",
-        minute="*",
-        max_instances=1
-    )
-    
-    # Daily reset (23:30 on trading days)
-    scheduler.add_job(
-        reset_daily_announcements,
-        "cron",
-        day_of_week="mon,tue,wed,thu",
-        hour=23,
-        minute=30,
-        max_instances=1,
-        name="reset_announcements"
-    )
-    
-    # Email collection (09:00, 12:00 and 15:00 on trading days)
-    scheduler.add_job(
-        collect_for_email,
-        "cron",
-        day_of_week="mon,tue,wed,thu,fri",
-        hour="9,12,17",
-        minute=0,
-        max_instances=1,
-        name="email_collection"
-    )
-    
-    scheduler.start()
-    yield
-    
-    scheduler.shutdown(wait=False)
-
-app = FastAPI(lifespan=lifespan)
-
+                
 def _standardize_measurement(measurement: str, unit: str) -> float:
     if unit == "ft":
         return float(measurement) * 0.3048
@@ -1278,6 +1231,16 @@ def get_assay_metrics(result: str) -> dict:
             metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[0].strip(), drill_depth_components[1].strip())
             
     return metrics
+
+def _format_market_cap(market_cap: int):
+    if market_cap >= 1e9:
+        return f"{round(market_cap / 1e9, 2)}B"
+    elif market_cap >= 1e6:
+        return f"{round(market_cap / 1e6, 2)}M"
+    elif market_cap >= 1e3:
+        return f"{round(market_cap / 1e3, 2)}K"
+    else:
+        return f"{market_cap}"
     
 def get_drill_score(assay_metrics: dict) -> float:
     
@@ -1387,19 +1350,57 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         
     return results
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    
+    logger.info("Starting FastAPI application...")
+    
+    scheduler = AsyncIOScheduler(
+        timezone = "Australia/Sydney"
+    )
+    
+    # ASX Announcement polling (trading days only)
+    scheduler.add_job(
+        renew_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="7-17",
+        minute="*",
+        max_instances=1
+    )
+    
+    # Daily reset (23:30 on trading days)
+    scheduler.add_job(
+        reset_daily_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu",
+        hour=23,
+        minute=30,
+        max_instances=1,
+        name="reset_announcements"
+    )
+    
+    # Email collection (09:00, 12:00 and 15:00 on trading days)
+    scheduler.add_job(
+        collect_for_email,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="9,12,17",
+        minute=0,
+        max_instances=1,
+        name="email_collection"
+    )
+    
+    scheduler.start()
+    yield
+    
+    scheduler.shutdown(wait=False)
+
+app = FastAPI(lifespan=lifespan)
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
-
-def _format_market_cap(market_cap: int):
-    if market_cap >= 1e9:
-        return f"{round(market_cap / 1e9, 2)}B"
-    elif market_cap >= 1e6:
-        return f"{round(market_cap / 1e6, 2)}M"
-    elif market_cap >= 1e3:
-        return f"{round(market_cap / 1e3, 2)}K"
-    else:
-        return f"{market_cap}"
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
