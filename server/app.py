@@ -761,7 +761,7 @@ def _format_assay(drill_metrics: dict) -> str:
     logger.info(formatted_assay)
     return formatted_assay
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e10) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e8) -> str:
     results = await get_drill_result(file_path, ticker)
     
     if results:
@@ -771,7 +771,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
         market_cap_formatted = _format_market_cap(market_cap)
         keywords = ["first", "maiden", "explor"]
         
-        if results["drill_score"] >= score_threshold or market_cap <= market_cap_threshold or any(keyword in report_type.lower() for keyword in keywords):
+        if results["drill_score"] >= score_threshold or (market_cap <= market_cap_threshold and any(keyword in report_type.lower() for keyword in keywords)):
             results["drill_score"] = int(results["drill_score"])
             assay = _format_assay(results["drill_metrics"])
             
