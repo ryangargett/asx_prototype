@@ -470,7 +470,9 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
         if message:
             logger.critical(f"Failed to push to collection: {collection_id} due to unexpected error: {message}")
         else:
+            success_msg = f"Successfully pushed to collection: {collection_id}"
             logger.info(f"Successfully pushed to collection: {collection_id}")
+            return success_msg
             
     except Exception as e:
         logger.error(f"Failure in uploading to webflow: {e}")
@@ -761,7 +763,7 @@ def _format_assay(drill_metrics: dict) -> str:
     logger.info(formatted_assay)
     return formatted_assay
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e10) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e8) -> str:
     results = await get_drill_result(file_path, ticker)
     
     if results:
@@ -771,7 +773,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
         market_cap_formatted = _format_market_cap(market_cap)
         keywords = ["first", "maiden", "explor"]
         
-        if results["drill_score"] >= score_threshold or market_cap <= market_cap_threshold or any(keyword in report_type.lower() for keyword in keywords):
+        if results["drill_score"] >= score_threshold or (market_cap <= market_cap_threshold and any(keyword in report_type.lower() for keyword in keywords)):
             results["drill_score"] = int(results["drill_score"])
             assay = _format_assay(results["drill_metrics"])
             
@@ -795,7 +797,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
     else:
         logger.error("Received poorly formatted drill result, skipping alert....")
 
-async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000) -> None:
+async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000, max_attempts: int = 3) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     
     logger.info(f"Beginning construction process for {file_path} {formal_title}....")
@@ -842,31 +844,39 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
+            attempt = 1
+            message = None
             
-            logger.info("Attempting webflow upload...")
-
-            if generated:
-                fieldData = {
-                    "name": generated["short_title"],
-                    "slug": article_slug,
-                    "article-datetime": formatted_datetime,
-                    "title": generated["long_title"],
-                    "short-title": generated["short_title"],
-                    "formal-title": formal_title,
-                    "content": generated["content"],
-                    "hash-value": announcement_hash,
-                    "summary": generated["summary"],
-                    "image-url": cover_image,
-                    "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
-                    "article-sector": sector_id,
-                    "article-industry": industry_id,
-                    "article-ticker": ticker_id,
-                    "article-industry-group": industry_group_id
-                }
+            while attempt <= max_attempts and not message:
                 
-                # Push the article to the collection
-                push_to_collection(collection_id, fieldData)
+                logger.info("Attempting webflow upload...")
+
+                if generated:
+                    fieldData = {
+                        "name": generated["short_title"],
+                        "slug": article_slug,
+                        "article-datetime": formatted_datetime,
+                        "title": generated["long_title"],
+                        "short-title": generated["short_title"],
+                        "formal-title": formal_title,
+                        "content": generated["content"],
+                        "hash-value": announcement_hash,
+                        "summary": generated["summary"],
+                        "image-url": cover_image,
+                        "document-url": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
+                        "article-sector": sector_id,
+                        "article-industry": industry_id,
+                        "article-ticker": ticker_id,
+                        "article-industry-group": industry_group_id
+                    }
+                    
+                    # Push the article to the collection
+                    message = push_to_collection(collection_id, fieldData)
+                if not message:
+                    attempt += 1
+                        
+            if message:
+                logger.info("Successfully uploaded article to webflow!")
                 industry_name = all_industries[industry_id]["fieldData"]["name"]
                 industry_group_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
                 
@@ -887,9 +897,9 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 
                 if industry_group_name == "Metals and Mining":
                     industry_group_name = "Mining"
-                
+                    
+                add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url)
                 await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
-            
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
@@ -898,8 +908,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     except Exception as e:
         logger.error(f"Failure in generating article for {file_path} {formal_title}: {e}")    
     finally:
-        #_remove_file(file_path)
-            
+        _remove_file(file_path)    
         logger.info(f"Concluded construction process for {file_path} {formal_title}....")
         
 def _format_datetime(unformatted_datetime: str) -> str:
@@ -1249,7 +1258,6 @@ def get_drill_score(assay_metrics: dict) -> float:
         drill_width_standardized = assay_metrics["drill_width_standardized"]
         standardized_materials = assay_metrics["standardized_materials"]
         drill_depth_standardized = assay_metrics["drill_depth_standardized"]        
-        logger.info(f"Drill width: {drill_width_standardized} m\nMaterials: {standardized_materials}\nDrill depth: {drill_depth_standardized} m")
 
         gold_doc = metals.find_one({"name": "Gold"})
         gold_price = gold_doc["adjusted_price"] if gold_doc else 0
@@ -1271,8 +1279,6 @@ def get_drill_score(assay_metrics: dict) -> float:
         gxm = gold_equivalent * drill_width_standardized
         #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
         drill_score = gxm #TODO: Eventually work in modifier once client is happy
-        
-        logger.info(f"Total value: {total_value}\nGold equivalent: {gxm}\nDrill score: {drill_score}")
     else:
         logger.warning("Received incomplete assay format, skipping....")
     
@@ -1310,8 +1316,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         
         results["drill_metrics"] = get_assay_metrics(summarized)
         
-        logger.info("Finished assay analysis: ")
-        logger.info(results["drill_metrics"])
+        logger.info("Concluded assay analysis")
         results["drill_score"] = get_drill_score(results["drill_metrics"])
         attempt += 1
     
@@ -1326,7 +1331,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         }
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements and provide detailed technical summaries."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report including the most significant drill assays. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. In this summary be sure to include any significant drill assays formatted as bolded text using HTML. Use full names for materials in these assays e.g. Copper instead of Cu. Be sure to include starting depth if provided in the assay, otherwise label as \"from surface\". Specify hole IDs with HTML bolding if provided in the report, otherwise just use \"hole\" unbolded. Use HTML bolding for all drill assays and drill hole IDs. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report including the most significant drill assays. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. In this summary be sure to include any significant drill assays formatted as <b>WIDTH @ MATERIALS from ENDING DEPTH</b>. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). Specify hole IDs provided in the report formatted as <b>HOLE_ID</b>. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
         
         logger.info(f"Constructing detailed technical summary for {ticker}")
         
@@ -1334,7 +1339,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         
         results["drill_results"]["technical"] = summarized
         
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 150 words.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
         
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         
