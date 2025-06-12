@@ -802,10 +802,10 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
     
     try:
         # Check if the article already exists in the site
-        #article_id = search_collection(collection_id, announcement_hash, "hash-value", suppress_warning=True)
-        #if article_id:
-        #    logger.warning(f"Attempted publication failed due to pre-existing article on website, skipping....")
-        #    return
+        article_id = search_collection(collection_id, announcement_hash, "hash-value", suppress_warning=True)
+        if article_id:
+            logger.warning(f"Attempted publication failed due to pre-existing article on website, skipping....")
+            return
         
         num_articles = _get_collection_size(collection_id)
         if num_articles is not None and num_articles > max_articles:
@@ -842,22 +842,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_slug = _generate_slug(generated["short_title"])
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
-            #add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
-            
-            announcement_type = await get_announcement_type(file_path, ticker)
-            if announcement_type.strip() != "N/A":
-                
-                article_meta = {
-                    "title": generated["short_title"],
-                    "url": article_url,
-                    "company": stock_data["name"],
-                    "image": cover_image,
-                    "summary": generated["email_summary"]
-                }
-                
-                await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
-            else:
-                logger.warning("Received poorly formatted drill result, skipping alert....")
+            add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url) # moved up priority queue to ensure articles are properly added to the email collection
             
             logger.info("Attempting webflow upload...")
 
@@ -881,14 +866,30 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 }
                 
                 # Push the article to the collection
-                #push_to_collection(collection_id, fieldData)
+                push_to_collection(collection_id, fieldData)
                 industry_name = all_industries[industry_id]["fieldData"]["name"]
                 industry_group_name = all_industry_groups[industry_group_id]["fieldData"]["name"]
+                
+                announcement_type = await get_announcement_type(file_path, ticker)
+                if announcement_type.strip() != "N/A":
+                    
+                    article_meta = {
+                        "title": generated["short_title"],
+                        "url": article_url,
+                        "company": stock_data["name"],
+                        "image": cover_image,
+                        "summary": generated["email_summary"]
+                    }
+                
+                    await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
+                else:
+                    logger.warning("Received poorly formatted drill result, skipping alert....")
                 
                 if industry_group_name == "Metals and Mining":
                     industry_group_name = "Mining"
                 
-                #await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
+                await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
+            
             
             else:
                 logger.error("Failed to generate content for article, skipping....")
