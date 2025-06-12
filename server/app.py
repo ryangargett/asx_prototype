@@ -761,7 +761,7 @@ def _format_assay(drill_metrics: dict) -> str:
     logger.info(formatted_assay)
     return formatted_assay
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 20000000) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e10) -> str:
     results = await get_drill_result(file_path, ticker)
     
     if results:
@@ -1136,55 +1136,7 @@ async def renew_announcements() -> None:
             if curr_time.hour >= 23 and curr_time.minute >= 30:
                 logger.warning(f"End of trading day, resetting announcements....")
                 reset_daily_announcements()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    
-    logger.info("Starting FastAPI application...")
-    
-    scheduler = AsyncIOScheduler(
-        timezone = "Australia/Sydney"
-    )
-    
-    # ASX Announcement polling (trading days only)
-    scheduler.add_job(
-        renew_announcements,
-        "cron",
-        day_of_week="mon,tue,wed,thu,fri",
-        hour="7-17",
-        minute="*",
-        max_instances=1
-    )
-    
-    # Daily reset (23:30 on trading days)
-    scheduler.add_job(
-        reset_daily_announcements,
-        "cron",
-        day_of_week="mon,tue,wed,thu",
-        hour=23,
-        minute=30,
-        max_instances=1,
-        name="reset_announcements"
-    )
-    
-    # Email collection (09:00, 12:00 and 15:00 on trading days)
-    scheduler.add_job(
-        collect_for_email,
-        "cron",
-        day_of_week="mon,tue,wed,thu,fri",
-        hour="9,12,17",
-        minute=0,
-        max_instances=1,
-        name="email_collection"
-    )
-    
-    scheduler.start()
-    yield
-    
-    scheduler.shutdown(wait=False)
-
-app = FastAPI(lifespan=lifespan)
-
+                
 def _standardize_measurement(measurement: str, unit: str) -> float:
     if unit == "ft":
         return float(measurement) * 0.3048
@@ -1279,6 +1231,16 @@ def get_assay_metrics(result: str) -> dict:
             metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[0].strip(), drill_depth_components[1].strip())
             
     return metrics
+
+def _format_market_cap(market_cap: int):
+    if market_cap >= 1e9:
+        return f"{round(market_cap / 1e9, 2)}B"
+    elif market_cap >= 1e6:
+        return f"{round(market_cap / 1e6, 2)}M"
+    elif market_cap >= 1e3:
+        return f"{round(market_cap / 1e3, 2)}K"
+    else:
+        return f"{market_cap}"
     
 def get_drill_score(assay_metrics: dict) -> float:
     
@@ -1388,19 +1350,57 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         
     return results
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    
+    logger.info("Starting FastAPI application...")
+    
+    scheduler = AsyncIOScheduler(
+        timezone = "Australia/Sydney"
+    )
+    
+    # ASX Announcement polling (trading days only)
+    scheduler.add_job(
+        renew_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="7-17",
+        minute="*",
+        max_instances=1
+    )
+    
+    # Daily reset (23:30 on trading days)
+    scheduler.add_job(
+        reset_daily_announcements,
+        "cron",
+        day_of_week="mon,tue,wed,thu",
+        hour=23,
+        minute=30,
+        max_instances=1,
+        name="reset_announcements"
+    )
+    
+    # Email collection (09:00, 12:00 and 15:00 on trading days)
+    scheduler.add_job(
+        collect_for_email,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="9,12,17",
+        minute=0,
+        max_instances=1,
+        name="email_collection"
+    )
+    
+    scheduler.start()
+    yield
+    
+    scheduler.shutdown(wait=False)
+
+app = FastAPI(lifespan=lifespan)
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the FastAPI application"}
-
-def _format_market_cap(market_cap: int):
-    if market_cap >= 1e9:
-        return f"{round(market_cap / 1e9, 2)}B"
-    elif market_cap >= 1e6:
-        return f"{round(market_cap / 1e6, 2)}M"
-    elif market_cap >= 1e3:
-        return f"{round(market_cap / 1e3, 2)}K"
-    else:
-        return f"{market_cap}"
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
