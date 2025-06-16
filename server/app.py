@@ -85,6 +85,7 @@ announcement_semaphore = Semaphore(10)
 asx_download_semaphore = Semaphore(2)
 
 from summarizer import read_pdf, summarize_content
+from metals import update_metal_prices
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
@@ -1364,6 +1365,16 @@ async def lifespan(app: FastAPI):
         timezone = "Australia/Sydney"
     )
     
+    scheduler.add_job(
+        update_metal_prices(logger),
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour=6,
+        minute=30,
+        max_instances=1,
+        name="update_metal_prices"
+    )
+    
     # ASX Announcement polling (trading days only)
     scheduler.add_job(
         renew_announcements,
@@ -1371,7 +1382,8 @@ async def lifespan(app: FastAPI):
         day_of_week="mon,tue,wed,thu,fri",
         hour="7-17",
         minute="*",
-        max_instances=1
+        max_instances=1,
+        name="renew_announcements"
     )
     
     # Daily reset (23:30 on trading days)
