@@ -191,7 +191,6 @@ if legal_tickers:
     logger.info("Successfully loaded legal tickers from cache")
     
 num_sensitive = 0
-
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
 
@@ -715,9 +714,7 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
     return slug
 
 def summarize_alerts() -> None:
-    
     num_sensitive = 0
-    
     alert_list = list(alerts.find({}))
     
     try:
@@ -796,7 +793,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                #email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
+                email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
                 
                 alerts.insert_one({
                     "ticker": ticker,
