@@ -19,6 +19,8 @@
       <mj-class name="article-text-content" padding="0 0 10px 20px" width="60%" />
       <mj-class name="article-title" align="left" font-size="18px" font-weight="bold" line-height="24px" padding="0 0 10px 0" />
       <mj-class name="article-summary" align="left" font-size="14px" line-height="19px" padding="0 0 10px 0" />
+
+      <mj-class name="announcement-btn" background-color="bf9b30" border="3px solid darkgoldenrod" padding="12px 24px" border-radius="10px" align="center" inner-padding="12px 24px" font-size="18px" align="center"line-height="20px" color="#ffffff"/>
     </mj-attributes>
   </mj-head>
 
@@ -28,7 +30,7 @@
       <mj-section>
         <mj-column>
           <mj-text mj-class="email-header">
-            ⚠️Our systems detected a potentially significant announcement from {{ article_meta.company }}⚠️
+            ⚠️Our systems detected a potentially significant announcement from {{ article_meta.company }} ({{ article_meta.ticker }})⚠️
           </mj-text>
         </mj-column>
       </mj-section>
@@ -96,13 +98,6 @@
         </mj-column>
       </mj-section>
 
-      <!-- Spacer -->
-      <mj-section>
-        <mj-column>
-          <mj-spacer height="20px" />
-        </mj-column>
-      </mj-section>
-
       <mj-section mj-class="alert-card">
         <mj-column>
           <mj-text mj-class="alert-subheading">
@@ -130,6 +125,11 @@
           <mj-text mj-class="alert-description">
             {{ alert_meta.drill_results.projection }}
           </mj-text>
+
+          <mj-button mj-class="announcement-btn" href={{ article_meta.document }}>
+            <b>VIEW DOCUMENT</b>
+          </mj-button>
+
         </mj-column>
       </mj-section>
 
