@@ -8,6 +8,9 @@
       <mj-class name="article-text-content" padding="0 0 10px 20px" width="60%" />
       <mj-class name="article-title" align="left" font-size="18px" font-weight="bold" line-height="24px" padding="0 0 10px 0" />
       <mj-class name="article-summary" align="left" font-size="14px" line-height="19px" padding="0 0 10px 0" />
+
+      <mj-class name="overflow-btn" background-color="bf9b30" border="3px solid darkgoldenrod" padding="12px 24px" border-radius="10px" align="center" inner-padding="12px 24px" font-size="18px" align="center"line-height="20px" color="#ffffff"/>
+
     </mj-attributes>
   </mj-head>
 
@@ -17,13 +20,8 @@
       <mj-section>
         <mj-column>
           <mj-text mj-class="email-header">
-            Hi Eric!
+            Hi!
           </mj-text>
-        </mj-column>
-      </mj-section>
-
-      <mj-section>
-        <mj-column>
           <mj-text mj-class="email-header">
             Here's what you've missed so far.... ⏰
           </mj-text>
@@ -57,12 +55,30 @@
         </mj-group>
       </mj-section>
 
+      {% if num_overflow > 0 %}
+        <!-- Spacer -->
+        <mj-section>
+          <mj-column>
+            <mj-spacer height="20px" />
+          </mj-column>
+        </mj-section>
+
+        <mj-section>
+          <mj-column>
+            <mj-button mj-class="overflow-btn" href=https://www.rockstocks.ai/>
+              And <b>{{ num_overflow }}</b> More....
+            </mj-button>
+          </mj-column>
+        </mj-section>
+      {% endif %}
+
       <!-- Spacer -->
       <mj-section>
         <mj-column>
           <mj-spacer height="20px" />
         </mj-column>
       </mj-section>
+
       {% else %}
       <!-- No Articles Message -->
       <mj-section>

@@ -1,7 +1,5 @@
 import asyncio
 import async_timeout
-import colorama
-import holidays
 import json
 import numpy as np
 import math
@@ -10,14 +8,12 @@ import pytz
 import random
 import regex as re
 import requests
-import traceback
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from dateutil.parser import parse
 from hashlib import sha256
-from logging import getLogger, LogRecord, Formatter, INFO, StreamHandler
 from pytz import timezone as tz
 
 import httpx
@@ -42,6 +38,7 @@ load_dotenv()
 jinja_env = Environment(loader=FileSystemLoader("./data/templates"))
 article_summary_template = jinja_env.get_template("article_summary.mjml.j2")
 announcement_alert_template = jinja_env.get_template("announcement_alert.mjml.j2")
+announcement_alert_summary_template = jinja_env.get_template("announcement_alert_summary.mjml.j2")
 
 reset_executor = ThreadPoolExecutor(max_workers=1)
 email_executor = ThreadPoolExecutor(max_workers=1)
@@ -70,6 +67,7 @@ documents = db["documents_new_2"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
+alerts = db["alerts"]
 
 # check if s3 connection can be established
 try:
@@ -191,6 +189,8 @@ legal_tickers = get_legal_tickers()
 
 if legal_tickers:
     logger.info("Successfully loaded legal tickers from cache")
+    
+num_sensitive = 0
 
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
@@ -199,7 +199,9 @@ def email_content(content: str, title: str) -> None:
     
     emails = [
         "dev@dunelmenterprises.com.au",
-        "rtwcapitaltrade@gmail.com"
+        "rtwcapitaltrade@gmail.com",
+        "sanchiarecson@gmail.com",
+        "cristian@torquemetals.com",
     ]
     
     for email in emails:
@@ -221,8 +223,9 @@ def email_content(content: str, title: str) -> None:
         else:
             logger.error(f"Failed to send email. Response: {response.text}")
 
-def collect_for_email() -> None:
-    logger.info("Starting email collection task.")
+def collect_for_email(max_articles: int = 10) -> None:
+    logger.info("Starting email collection task")
+    num_overflow = 0
 
     try:
         collated_articles = list(articles.find({}).sort("datetime", -1))
@@ -232,8 +235,17 @@ def collect_for_email() -> None:
         for article in collated_articles:
             email_list.append(article)
             
+        if len(email_list) > max_articles:
+            email_list = email_list[:max_articles]
+            num_overflow = len(collated_articles) - max_articles
 
-        mjml_src = article_summary_template.render(articles=email_list)
+        mjml_src = article_summary_template.render(
+            articles = email_list,
+            num_overflow = num_overflow
+        )
+        
+        print(mjml_src)
+        
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
         email_content(html_compiled, "RockStocks Daily Update")
@@ -702,6 +714,33 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         
     return slug
 
+def summarize_alerts() -> None:
+    
+    num_sensitive = 0
+    
+    alert_list = list(alerts.find({}))
+    
+    try:
+        mjml_src = announcement_alert_summary_template.render(
+            alerts = alert_list,
+            num_alerts = len(alert_list),
+            num_sensitive = num_sensitive,
+        )
+        
+        print(mjml_src)
+        
+        compiled = mjml_to_html(mjml_src)
+        html_compiled = compiled.html
+        email_content(html_compiled, f"⚠️Alert Update⚠️")
+        
+        return html_compiled
+        
+    except Exception as e:
+        logger.error(f"Error occurred during alert summary compilation: {e}")
+    finally:
+        alerts.delete_many({})
+        num_sensitive = 0
+
 def add_to_email(article_title: str, article_summary: str, article_image: str, article_datetime: str, url: str) -> None:
     
     try:
@@ -757,7 +796,18 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
+                #email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
+                
+                alerts.insert_one({
+                    "ticker": ticker,
+                    "market_cap": market_cap_formatted,
+                    "assay": assay,
+                    "article_title": article_meta["title"],
+                    "article_url": article_meta["url"],
+                    "document_title": article_meta["document_title"],
+                    "document_url": article_meta["document"],
+                })
+                
                 return html_compiled
                 
             except Exception as e:
@@ -855,6 +905,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                     
                     article_meta = {
                         "title": generated["short_title"],
+                        "document_title": formal_title,
                         "url": article_url,
                         "document": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
                         "ticker": ticker,
@@ -1043,13 +1094,17 @@ async def process_announcement(announcement: dict) -> None:
                     push_announcement_to_site(announcement_hash, formatted_datetime, stock_id, announcement["heading"], announcement["isSensitive"] == "Y", is_cash_flow, is_substantial)
 
                     #TODO: Improve filtering mechanism to avoid unnecessary uploads
-                    if announcement.get("isSensitive", "N") == "Y" and announcement.get("code", "") in legal_tickers and "11001" in announcement.get("newsTypes", []):
-                        logger.info("Discovered legal entry!")                                 
-                        asyncio.create_task(
-                            push_article_to_site(
-                                f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                    if announcement.get("isSensitive", "N") == "Y":
+                        num_sensitive += 1
+                        if announcement.get("code", "") in legal_tickers and "11001" in announcement.get("newsTypes", []):
+                            logger.info("Discovered legal entry!")                                 
+                            asyncio.create_task(
+                                push_article_to_site(
+                                    f_name, announcement_hash, formatted_datetime, announcement["code"], announcement["heading"] # create new process for article generation to ensure announcements are kept up-to-date
+                                )
                             )
-                        )
+                        else:
+                            _remove_file(f_name)
                     else:
                         _remove_file(f_name)
                 
@@ -1415,6 +1470,16 @@ async def lifespan(app: FastAPI):
         name="email_collection"
     )
     
+    # Email collection (09:00, 12:00 and 15:00 on trading days)
+    scheduler.add_job(
+        summarize_alerts,
+        "cron",
+        day_of_week="mon,tue,wed,thu,fri",
+        hour="8,18",
+        minute=0,
+        max_instances=1,
+        name="summarize_alerts"
+    )
     scheduler.start()
     yield
     

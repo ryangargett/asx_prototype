@@ -3,11 +3,12 @@ import json
 import os
 import requests
 
-from logging import Logger
 from pymongo import MongoClient
 
 from dotenv import load_dotenv
 load_dotenv()
+
+from logging_init import logger
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
     
@@ -27,15 +28,19 @@ def _get_prices(symbols: list) -> dict:
         "access_key": metal_key,
         "symbols": ",".join(symbols)
     }
-
-    response = requests.get(
-        "https://metals-api.com/api/latest", 
-        params=params
-    )
-    data = response.json()
+    
+    try:
+        response = requests.get(
+            "https://metals-api.com/api/latest", 
+            params=params
+        )
+        data = response.json()
+    except Exception as e:
+        logger.error(f"Unexpected error fetching metal prices: {e}")
+        return {}
     return data["rates"]   
 
-def update_metal_prices(logger: Logger) -> None:
+def update_metal_prices() -> None:
     
     commodities = list(metals.find({}, {"symbol": 1}))
     symbols = [commodity["symbol"] for commodity in commodities]
@@ -45,6 +50,7 @@ def update_metal_prices(logger: Logger) -> None:
     
     for ii in range(0, len(symbols), 10):
         symbols_batch = symbols[ii:ii+10]
+        logger.info(f"Updating commodity batch: {symbols_batch}")
         prices = _get_prices(symbols_batch)
         
         for symbol, price in prices.items():
