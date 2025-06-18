@@ -96,11 +96,23 @@
         </mj-column>
       </mj-section>
 
+      <!-- Spacer -->
+      <mj-section>
+        <mj-column>
+          <mj-spacer height="20px" />
+        </mj-column>
+      </mj-section>
+
       <mj-section mj-class="alert-card">
         <mj-column>
           <mj-text mj-class="alert-subheading">
             Technical Summary
           </mj-text>
+          {% for hole in alert_meta.drill_results.significant_assays %}
+          <mj-text mj-class="alert-text">
+            {{ hole }}
+          </mj-text>
+          {% endfor %}
           <mj-text mj-class="alert-description">
             {{ alert_meta.drill_results.technical }}
           </mj-text>
