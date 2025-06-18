@@ -46,46 +46,12 @@ announcement_alert_template = jinja_env.get_template("announcement_alert.mjml.j2
 reset_executor = ThreadPoolExecutor(max_workers=1)
 email_executor = ThreadPoolExecutor(max_workers=1)
 
-class CustomAsyncHandler(StreamHandler):
-    def __init__(self):
-        super().__init__()
-        colorama.init()
-        self._colors = {
-            "INFO": colorama.Fore.GREEN,
-            "WARNING": colorama.Fore.YELLOW,
-            "ERROR": colorama.Fore.RED,
-            "CRITICAL": colorama.Fore.MAGENTA
-        }
-        self._reset = colorama.Style.RESET_ALL
-
-    def get_color(self, levelname: str) -> str:
-        return self._colors.get(levelname, '')
-
-    def format(self, record: LogRecord) -> str:
-        message = super().format(record)
-        return f"{self.get_color(record.levelname)}{message}{self._reset}"
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            tqdm.write(msg)
-            self.flush()
-        except Exception:
-            self.handleError(record)
-            
-logger = getLogger("asx_app_logger")
-logger.setLevel(INFO)
-
-handler = CustomAsyncHandler()
-formatter = Formatter("%(asctime)s | %(levelname)s | %(message)s")
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
 announcement_semaphore = Semaphore(10)
 asx_download_semaphore = Semaphore(2)
 
 from summarizer import read_pdf, summarize_content
 from metals import update_metal_prices
+from logging_init import logger
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
 
@@ -472,7 +438,7 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
             logger.critical(f"Failed to push to collection: {collection_id} due to unexpected error: {message}")
         else:
             success_msg = f"Successfully pushed to collection: {collection_id}"
-            logger.info(f"Successfully pushed to collection: {collection_id}")
+            logger.info(success_msg)
             return success_msg
             
     except Exception as e:
@@ -1407,7 +1373,7 @@ async def lifespan(app: FastAPI):
     )
     
     scheduler.add_job(
-        update_metal_prices(logger),
+        update_metal_prices,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
         hour=6,
