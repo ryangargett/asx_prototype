@@ -28,12 +28,16 @@ def _get_prices(symbols: list) -> dict:
         "access_key": metal_key,
         "symbols": ",".join(symbols)
     }
-
-    response = requests.get(
-        "https://metals-api.com/api/latest", 
-        params=params
-    )
-    data = response.json()
+    
+    try:
+        response = requests.get(
+            "https://metals-api.com/api/latest", 
+            params=params
+        )
+        data = response.json()
+    except Exception as e:
+        logger.error(f"Unexpected error fetching metal prices: {e}")
+        return {}
     return data["rates"]   
 
 def update_metal_prices() -> None:
