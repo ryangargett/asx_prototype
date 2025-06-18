@@ -787,9 +787,12 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     article_meta = article_meta,
                 )
                 
+                print(mjml_src)
+                
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚠️ALERT - {results['drill_results']['title']}")
+                email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
+                return html_compiled
                 
             except Exception as e:
                 logger.error(f"Error occurred during email content compilation: {e}")
@@ -887,6 +890,8 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                     article_meta = {
                         "title": generated["short_title"],
                         "url": article_url,
+                        "document": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
+                        "ticker": ticker,
                         "company": stock_data["name"],
                         "image": cover_image,
                         "summary": generated["email_summary"]
@@ -1328,11 +1333,24 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         results["drill_results"] = {
             "technical": "",
             "investor": "",
-            "title": ""
+            "title": "",
+            "project_name": "",
+            "prospect_name": "",
+            "project_region": "",
         }
         
-        system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements and provide detailed technical summaries."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report including the most significant drill assays. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. In this summary be sure to include any significant drill assays formatted as <b>WIDTH @ MATERIALS from ENDING DEPTH</b>. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). Specify hole IDs provided in the report formatted as <b>HOLE_ID</b>. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
+    
+    
+        summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        significant_holes = summarized.split(";")
+        if significant_holes[0] == "":
+            significant_holes = significant_holes[1:]
+        results["drill_results"]["significant_assays"] = significant_holes
+        
+        system_prompt = f"You are a highly intelligent AI model trained to provide detailed technical summaries for company drilling reports."
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
         
         logger.info(f"Constructing detailed technical summary for {ticker}")
         
@@ -1340,17 +1358,40 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         
         results["drill_results"]["technical"] = summarized
         
+        system_prompt = f"You are a highly intelligent AI model trained to provide summaries for company announcements targeted towards investors."
         prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
         
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-        
         results["drill_results"]["investor"] = summarized
+        
+        system_prompt = f"You are a highly intelligent AI model trained to provide projections and potential future actions based on company announcements targeted towards investors."
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Based on the findings from this document and the general state of the industry that the company operates in, provide a summary of what future actions the company could take based on the findings in this report, and how this may impact its' future performance and valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        
+        summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        results["drill_results"]["projection"] = summarized
     
         system_prompt = f"You are a highly intelligent AI model trained to provide titles for company announcements."
         prompt = f"The following is an announcement from company with ASX ticker: {ticker} published recently. Please provide a short title for the announcement appropriate for an email alert for a potential investor / trader. This title should be SEO-optimized and include simple language that summarizes the announcement without including technical markers or data points. \n\nANNOUNCEMENT: {full_content}"
         
+        
         title = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         results["drill_results"]["title"] = title
+        
+        system_prompt = f"You are a highly intelligent AI model trained to extract project details from drilling reports."
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the full project name, prospect name and the region the project is being conducted in. The response should be formatted as the following: PROJECT NAME; PROSPECT NAME; REGION. If any of these cannot be provided, replace the relevant field with 'N/A'.\n\nDOCUMENT: {full_content}"
+        
+        
+        project_details = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        project_details = project_details.split(";")
+        
+        if len(project_details) == 3:
+            results["drill_results"]["project_name"] = project_details[0]
+            results["drill_results"]["prospect_name"] = project_details[1]
+            results["drill_results"]["project_region"] = project_details[2]
+        else:
+            results["drill_results"]["project_name"] = "N/A"
+            results["drill_results"]["prospect_name"] = "N/A"
+            results["drill_results"]["project_region"] = "N/A"
     else:
         logger.error(f"Could not extract drill assay within maximum allowed attempts, skipping....")
         
