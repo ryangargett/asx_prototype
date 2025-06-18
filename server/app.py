@@ -223,8 +223,9 @@ def email_content(content: str, title: str) -> None:
         else:
             logger.error(f"Failed to send email. Response: {response.text}")
 
-def collect_for_email() -> None:
-    logger.info("Starting email collection task.")
+def collect_for_email(max_articles: int = 10) -> None:
+    logger.info("Starting email collection task")
+    num_overflow = 0
 
     try:
         collated_articles = list(articles.find({}).sort("datetime", -1))
@@ -234,8 +235,17 @@ def collect_for_email() -> None:
         for article in collated_articles:
             email_list.append(article)
             
+        if len(email_list) > max_articles:
+            email_list = email_list[:max_articles]
+            num_overflow = len(collated_articles) - max_articles
 
-        mjml_src = article_summary_template.render(articles=email_list)
+        mjml_src = article_summary_template.render(
+            articles = email_list,
+            num_overflow = num_overflow
+        )
+        
+        print(mjml_src)
+        
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
         email_content(html_compiled, "RockStocks Daily Update")
