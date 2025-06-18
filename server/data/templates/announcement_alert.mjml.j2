@@ -13,7 +13,7 @@
 
       <mj-class name="alert-title-card" background-color="#bf9b30" padding="20px" margin="10px" border-radius="10px" border="1px solid #dddddd" />
       <mj-class name="alert-title" align="center" font-size="18px" font-weight="bold" line-height="20px" padding="5px 0px 10px 0px" color="#ffffff"/>
-      <mj-class name="alert-metrics" align="left" font-size="18px" font-weight="bold" line-height="20px" padding="5px 0px 10px 0px"/>
+      <mj-class name="alert-metrics" align="center" font-size="18px" line-height="20px" padding="5px 0px 10px 0px"/>
 
       <mj-class name="article-card" background-color="#ffffff" padding="20px" border-radius="10px" border="1px solid #dddddd" />
       <mj-class name="article-text-content" padding="0 0 10px 20px" width="60%" />
@@ -51,12 +51,17 @@
 
       <mj-section mj-class="alert-card">
         <mj-column>
-          <mj-text mj-class="alert-heading">
-            Best Result: {{ alert_meta.drill_score }} GxM
+          <mj-text mj-class="alert-metrics">
+            <div style="font-size: 23px; display: inline-block; border: 3px solid #bf9b30; border-radius: 10px; padding: 5px 10px;"><b>Score:</b> {{ alert_meta.drill_score }}</div>
           </mj-text>
           <mj-text mj-class="alert-text">
-            {{ assay }}
+            <b>Best Result:</b> {{ assay }}
           </mj-text>
+          <mj-text mj-class="alert-text">
+            <b>Market Cap:</b> {{ market_cap }}
+          </mj-text>
+          <mj-text mj-class="alert-text">
+            <b>Report Type:</b> {{ report_type }}
         </mj-column>
       </mj-section>
 
@@ -69,29 +74,17 @@
 
       <mj-section mj-class="alert-card">
         <mj-column>
-          <mj-text mj-class="alert-heading">
-            Market Cap:
+          <mj-text mj-class="alert-subheading">
+            Project Details
           </mj-text>
           <mj-text mj-class="alert-text">
-            {{ market_cap }}
-          </mj-text>
-        </mj-column>
-      </mj-section>
-
-      <!-- Spacer -->
-      <mj-section>
-        <mj-column>
-          <mj-spacer height="20px" />
-        </mj-column>
-      </mj-section>
-
-      <mj-section mj-class="alert-card">
-        <mj-column>
-          <mj-text mj-class="alert-heading">
-            Report Type:
+            <b>Name:</b> {{ alert_meta.drill_results.project_name }}
           </mj-text>
           <mj-text mj-class="alert-text">
-            {{ report_type }}
+            <b>Prospect:</b> {{ alert_meta.drill_results.prospect_name }}
+          </mj-text>
+          <mj-text mj-class="alert-text">
+            <b>Region:</b> {{ alert_meta.drill_results.project_region }}
           </mj-text>
         </mj-column>
       </mj-section>
@@ -117,6 +110,13 @@
           </mj-text>
           <mj-text mj-class="alert-description">
             {{ alert_meta.drill_results.investor }}
+          </mj-text>
+
+          <mj-text mj-class="alert-subheading">
+            Catalysts
+          </mj-text>
+          <mj-text mj-class="alert-description">
+            {{ alert_meta.drill_results.projection }}
           </mj-text>
         </mj-column>
       </mj-section>
