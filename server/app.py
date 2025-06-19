@@ -60,10 +60,12 @@ except Exception as e:
     logger.error(f"MongoDB connection failed - {e}")
 
 access_token = os.getenv("WEBFLOW_API_KEY")
-collection_id = os.getenv("WEBFLOW_COLLECTION_ID")    
+collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
+
+num_sensitive = 0
 
 db = mongo_client["main"]
-documents = db["documents_new_2"]
+documents = db["documents_new_3"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
@@ -189,8 +191,6 @@ legal_tickers = get_legal_tickers()
 
 if legal_tickers:
     logger.info("Successfully loaded legal tickers from cache")
-    
-num_sensitive = 0
 def _get_curr_time():
     return datetime.now(tz("Australia/Sydney"))
 
@@ -242,8 +242,6 @@ def collect_for_email(max_articles: int = 10) -> None:
             articles = email_list,
             num_overflow = num_overflow
         )
-        
-        print(mjml_src)
         
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
@@ -428,7 +426,10 @@ def _get_collection_size(collection_id: str) -> int:
     num_articles = len(all_items)
     return 0 if num_articles is None else num_articles
 
-def push_to_collection(collection_id: str, payload: dict) -> None:
+def push_to_collection(collection_id: str, payload: dict, silent: bool = False) -> None:
+    
+    success_msg = None
+    
     try:
         response = requests.post(
             f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
@@ -449,11 +450,13 @@ def push_to_collection(collection_id: str, payload: dict) -> None:
             logger.critical(f"Failed to push to collection: {collection_id} due to unexpected error: {message}")
         else:
             success_msg = f"Successfully pushed to collection: {collection_id}"
-            logger.info(success_msg)
-            return success_msg
+            if not silent:
+                logger.info(success_msg)
             
     except Exception as e:
         logger.error(f"Failure in uploading to webflow: {e}")
+        
+    return success_msg
 
 
 def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
@@ -588,7 +591,7 @@ def push_announcement_to_site(hash: str, datetime: str, stock_id: str, formal_ti
     }
     
     announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
-    push_to_collection(announcement_collection_id, fieldData)
+    push_to_collection(announcement_collection_id, fieldData, silent = True)
 
 def delete_item(collection_id: str, item_id: str) -> None:
     # need to unpublish the live item first to completely drop it from the collection
@@ -714,7 +717,7 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
     return slug
 
 def summarize_alerts() -> None:
-    num_sensitive = 0
+    global num_sensitive
     alert_list = list(alerts.find({}))
     
     try:
@@ -723,8 +726,6 @@ def summarize_alerts() -> None:
             num_alerts = len(alert_list),
             num_sensitive = num_sensitive,
         )
-        
-        print(mjml_src)
         
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
@@ -769,14 +770,14 @@ def _format_assay(drill_metrics: dict) -> str:
 async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e8) -> str:
     results = await get_drill_result(file_path, ticker)
     
+    logger.info(report_type)
+    
     if results:
-        
-        print(results)
         
         market_cap_formatted = _format_market_cap(market_cap)
         keywords = ["first", "maiden", "explor"]
         
-        if results["drill_score"] >= score_threshold or (market_cap <= market_cap_threshold and any(keyword in report_type.lower() for keyword in keywords)):
+        if results["drill_score"] >= score_threshold or market_cap <= market_cap_threshold or any(keyword in report_type.lower() for keyword in keywords):
             results["drill_score"] = int(results["drill_score"])
             assay = _format_assay(results["drill_metrics"])
             
@@ -788,8 +789,6 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     report_type = report_type,
                     article_meta = article_meta,
                 )
-                
-                print(mjml_src)
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
@@ -814,7 +813,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
     else:
         logger.error("Received poorly formatted drill result, skipping alert....")
 
-async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000, max_attempts: int = 3) -> None:
+async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000, max_attempts: int = 5) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     
     logger.info(f"Beginning construction process for {file_path} {formal_title}....")
@@ -862,11 +861,12 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             article_url = f"https://www.rockstocks.ai/articles/{article_slug}"
             
             attempt = 1
+            base_delay = 1
             message = None
             
             while attempt <= max_attempts and not message:
                 
-                logger.info("Attempting webflow upload...")
+                logger.info(f"Attempting webflow upload... {attempt}/{max_attempts}")
 
                 if generated:
                     fieldData = {
@@ -889,7 +889,13 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                     
                     # Push the article to the collection
                     message = push_to_collection(collection_id, fieldData)
+                    
                 if not message:
+                    if attempt < max_attempts:  # Don't sleep on the last attempt
+                        delay = base_delay * (2 ** (attempt - 1))  # Exponential backoff formula
+                        delay = min(delay, 60)  # Cap at 60 seconds maximum delay
+                        logger.warning(f"Upload failed, waiting {delay} seconds before retry...")
+                        await asyncio.sleep(delay)
                     attempt += 1
                         
             if message:
@@ -1034,6 +1040,8 @@ async def process_announcement(announcement: dict) -> None:
     generating article content, and pushing it to Webflow asynchronously.
     """
     
+    global num_sensitive
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept": "application/pdf,application/x-pdf,*/*",
@@ -1067,7 +1075,7 @@ async def process_announcement(announcement: dict) -> None:
                     response = requests.get(
                         announcement["documentURL"], 
                         headers=headers, 
-                        auth=(os.getenv("ASX_API_USERNAME"), os.getenv("ASX_API_PASSWORD"))
+                        auth=auth
                     )
                 
                     with open(f_name, "wb") as f:
@@ -1122,12 +1130,12 @@ async def process_announcement(announcement: dict) -> None:
                     logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
             except Exception as e:
                 logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
-                #logger.error(traceback.format_exc())
                 _remove_file(f_name)     
         else:
             logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
     else:
         logger.error(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to malformed content and / or missing document URL.")
+        
                    
 async def renew_announcements() -> None:
 
@@ -1162,24 +1170,33 @@ async def renew_announcements() -> None:
             
     except Exception as e:
         logger.error(f"Unexpected error encountered when polling ASX announcements: {e}")
-        
-        curr_time = _get_curr_time()
-        
-        if curr_time.weekday() < 4: # Monday to Thursday, we keep announcements over the weekend
-            if curr_time.hour >= 23 and curr_time.minute >= 30:
-                logger.warning(f"End of trading day, resetting announcements....")
-                reset_daily_announcements()
                 
-def _standardize_measurement(measurement: str, unit: str) -> float:
+def _standardize_measurement(measurement: list, unit: str) -> float:
+    
+    if len(measurement) == 1:
+        try:
+            measurement = float(measurement[0])
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error converting measurement {measurement} to float: {e}")
+            return None
+    else:
+        try: # assume a ["lower", "-", "higher"] structure
+            measurement_lower = float(measurement[0])
+            measurement_upper = float(measurement[2])
+            measurement = round((measurement_lower + measurement_upper) / 2, 2)
+        except (ValueError, TypeError, IndexError) as e:
+            logger.error(f"Error converting measurement {measurement} to float: {e}")
+            return None
+
     if unit == "ft":
-        return float(measurement) * 0.3048
+        return measurement * 0.3048
     elif unit == "%":
-        return float(measurement) * 10000
+        return measurement * 10000
     elif unit in ["m", "g/t"]:
-        return float(measurement)
+        return measurement
     else:
         logger.warning(f"Received measurement with unknown unit {unit}, defaulting to metric")
-        return float(measurement)
+        return measurement
     
 def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, gxm_coeff: float = 0.5, depth_threshold: float = 500.0) -> float:
     depth_modifier = 1 / (1 + math.exp((depth - depth_threshold) / 100))
@@ -1225,7 +1242,7 @@ def get_assay_metrics(result: str) -> dict:
         "drill_width_standardized": None,
         "raw_materials": None,
         "standardized_materials": None,
-        "drill_depth_standardized": None
+        "drill_depth_standardized": 0.0
     }
     
     result_components = result.split("$$")
@@ -1236,32 +1253,45 @@ def get_assay_metrics(result: str) -> dict:
         assay_components = assay_components[:-1]
     if len(assay_components) == 3:
         drill_width = assay_components[0]
+        
         drill_width_components = drill_width.split(" ")
-        if len(drill_width_components) > 1:
-            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[0].strip(), drill_width_components[1])
+        if len(drill_width_components) > 1:    
+            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[:-1], drill_width_components[-1].strip())
         else:
             logger.warning("Received assay with missing unit, defaulting to metric")
             metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[0].strip(), "m")
+            if metrics["drill_width_standardized"] == None:
+                return None
         
         metrics["raw_materials"] = assay_components[1].strip().replace("[", "").replace("]", "")   
         materials = metrics["raw_materials"].split(",")
         metrics["standardized_materials"] = {}
         for material in materials:
             material_components = material.strip().split(" ")
-            if len(material_components) == 3:
+            material_name = material_components[0].replace(":", "").strip()
+            if len(material_name.split(" ")) == 1:
                 material_name = material_components[0].replace(":", "").strip()
-                metrics["standardized_materials"][material_name] = _standardize_measurement(material_components[1].strip(), material_components[2].strip())
+                metrics["standardized_materials"][material_name] = _standardize_measurement(material_components[1:-1], material_components[-1].strip())
+                if metrics["standardized_materials"][material_name] == None:
+                    return None
+            else:
+                return None
                 
         drill_depth = assay_components[2].strip()
         drill_depth_components = drill_depth.split(" ")
-        if len(drill_width_components) == 1:
-            if drill_depth.lower() not in ["eoh", "aircore"]:
-                logger.warning("Received assay with missing drill depth, defaulting to surface")
-            
-            metrics["drill_depth_standardized"] = 0.0
-        
+        if len(drill_depth_components) == 2:
+            metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[:-1], drill_depth_components[-1].strip())
+            if metrics["drill_depth_standardized"] == None:
+                if "drilling" in drill_depth.lower() or "surface" in drill_depth.lower():
+                    metrics["drill_depth_standardized"] = drill_depth.lower()
+                else:
+                    return None
+        elif drill_depth.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
+            logger.warning("Received assay with non-numeric drill depth")
+            metrics["drill_depth_standardized"] = drill_depth.lower()
         else:
-            metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[0].strip(), drill_depth_components[1].strip())
+            logger.warning("Received assay with no valid drill depth descriptor, defaulting to surface")
+            drill_depth = 0.0
             
     return metrics
 
@@ -1319,7 +1349,7 @@ async def get_announcement_type(path: str, ticker: str) -> str:
     return announcement_type
     
 
-async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dict:
+async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
         "drill_metrics": None,
         "drill_score": 0.0,
@@ -1331,18 +1361,22 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
     content = read_pdf(path, 1)
     
     system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m.\n\nDOCUMENT: {content}"
+    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m. If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m).\n\nDOCUMENT: {content}"
     
     while attempt <= max_attempts and results["drill_score"] == 0.0:
         logger.info(f"Beginning assay analysis.... (attempt {attempt} / {max_attempts})")
         
-        summarized = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        assay = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        logger.info(assay)
         
-        results["drill_metrics"] = get_assay_metrics(summarized)
-        
-        logger.info("Concluded assay analysis")
-        results["drill_score"] = get_drill_score(results["drill_metrics"])
+        results["drill_metrics"] = get_assay_metrics(assay)
         attempt += 1
+        if results["drill_metrics"] is not None:
+            logger.info("Concluded assay analysis")
+            results["drill_score"] = get_drill_score(results["drill_metrics"])
+        else:
+            logger.error("Unexpected error occured when analyzing drill results, retrying....")
+        
     
     if results["drill_score"] > 0.0:
 
@@ -1358,7 +1392,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 3) -> dic
         }
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
     
     
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
@@ -1467,7 +1501,7 @@ async def lifespan(app: FastAPI):
         name="email_collection"
     )
     
-    # Email collection (09:00, 12:00 and 15:00 on trading days)
+    # Email alert aggregation
     scheduler.add_job(
         summarize_alerts,
         "cron",
@@ -1489,4 +1523,5 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    reset_daily_announcements()
