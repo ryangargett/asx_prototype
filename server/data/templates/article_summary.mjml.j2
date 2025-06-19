@@ -20,10 +20,7 @@
       <mj-section>
         <mj-column>
           <mj-text mj-class="email-header">
-            Hi!
-          </mj-text>
-          <mj-text mj-class="email-header">
-            Here's what you've missed so far.... ⏰
+            Hi!  Here's what you've missed so far.... ⏰
           </mj-text>
         </mj-column>
       </mj-section>
@@ -55,23 +52,6 @@
         </mj-group>
       </mj-section>
 
-      {% if num_overflow > 0 %}
-        <!-- Spacer -->
-        <mj-section>
-          <mj-column>
-            <mj-spacer height="20px" />
-          </mj-column>
-        </mj-section>
-
-        <mj-section>
-          <mj-column>
-            <mj-button mj-class="overflow-btn" href=https://www.rockstocks.ai/>
-              And <b>{{ num_overflow }}</b> More....
-            </mj-button>
-          </mj-column>
-        </mj-section>
-      {% endif %}
-
       <!-- Spacer -->
       <mj-section>
         <mj-column>
@@ -89,6 +69,23 @@
         </mj-column>
       </mj-section>
       {% endfor %}
+
+      {% if num_overflow > 0 %}
+        <!-- Spacer -->
+        <mj-section>
+          <mj-column>
+            <mj-spacer height="20px" />
+          </mj-column>
+        </mj-section>
+
+        <mj-section>
+          <mj-column>
+            <mj-button mj-class="overflow-btn" href=https://www.rockstocks.ai/>
+              And <b>{{ num_overflow }}</b> More....
+            </mj-button>
+          </mj-column>
+        </mj-section>
+      {% endif %}
 
       <!-- Footer -->
       <mj-section padding="20px 40px" text-align="center">
