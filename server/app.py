@@ -813,7 +813,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
     else:
         logger.error("Received poorly formatted drill result, skipping alert....")
 
-async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000, max_attempts: int = 5) -> None:
+async def push_article_to_site(file_path: str, announcement_hash: str, formatted_datetime: str, ticker: str, formal_title: str, max_articles: int = 6000, max_attempts: int = 7) -> None:
     collection_id = os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID")
     
     logger.info(f"Beginning construction process for {file_path} {formal_title}....")
@@ -866,7 +866,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
             
             while attempt <= max_attempts and not message:
                 
-                logger.info(f"Attempting webflow upload... {attempt}/{max_attempts}")
+                logger.info(f"Attempting webflow upload... {attempt} / {max_attempts}")
 
                 if generated:
                     fieldData = {
