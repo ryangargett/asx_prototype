@@ -1279,20 +1279,14 @@ def get_assay_metrics(result: str) -> dict:
                 
         drill_depth = assay_components[2].strip()
         drill_depth_components = drill_depth.split(" ")
-        if len(drill_depth_components) == 2:
-            metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[:-1], drill_depth_components[-1].strip())
-            if metrics["drill_depth_standardized"] == None:
-                if "drilling" in drill_depth.lower() or "surface" in drill_depth.lower():
-                    metrics["drill_depth_standardized"] = drill_depth.lower()
-                else:
-                    return None
-        elif drill_depth.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
-            logger.warning("Received assay with non-numeric drill depth")
-            metrics["drill_depth_standardized"] = drill_depth.lower()
-        else:
-            logger.warning("Received assay with no valid drill depth descriptor, defaulting to surface")
-            drill_depth = 0.0
-            
+        metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[:-1], drill_depth_components[-1].strip())
+        if metrics["drill_depth_standardized"] == None:
+            if drill_depth.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
+                metrics["drill_depth_standardized"] = drill_depth.lower()
+            else:
+                logger.warning("Received assay with no valid drill depth descriptor, defaulting to surface")
+                drill_depth = 0.0
+                
     return metrics
 
 def _format_market_cap(market_cap: int):
