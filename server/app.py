@@ -1500,8 +1500,8 @@ async def lifespan(app: FastAPI):
         summarize_alerts,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="8,18",
-        minute=0,
+        hour="9,15",
+        minute=50,
         max_instances=1,
         name="summarize_alerts"
     )
