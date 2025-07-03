@@ -96,6 +96,36 @@ except Exception as e:
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
+def get_email_list() -> list:
+    
+    """Returns a list of email addresses from Memberstack, filtered to only include those with the email-alerts custom field set
+    """
+    
+    headers = {
+        "X-API-KEY": os.getenv("MEMBERSTACK_API_KEY"),
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(
+            "https://admin.memberstack.com/members", headers=headers)
+        response = response.json()
+        
+        member_data = response.get("data", {})
+        if member_data:
+            
+            legal_emails = []
+            
+            for member in member_data:
+                has_alerts = member["customFields"].get("email-alerts", False)
+                if has_alerts:
+                    legal_emails.append(member["auth"]["email"])
+                else:
+                    print("Received invalid member data from Memberstack")
+                
+    except Exception as e:
+        print(f"Unexpected error getting email list: {e}")
+
 def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
     if os.path.exists(cache_path):
         with open(cache_path) as f:
@@ -196,12 +226,7 @@ def _get_curr_time():
 
 def email_content(content: str, title: str) -> None:
     
-    emails = [
-        "dev@dunelmenterprises.com.au",
-        "rtwcapitaltrade@gmail.com",
-        "sanchiarecson@gmail.com",
-        "cristian@torquemetals.com",
-    ]
+    emails = get_email_list()
     
     for email in emails:
     
