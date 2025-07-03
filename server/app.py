@@ -127,10 +127,10 @@ def get_email_list() -> list[dict]:
                             "address": address
                             })
                 else:
-                    print("Received invalid member data from Memberstack")
+                    logger.warning("Received invalid member data from Memberstack")
                 
     except Exception as e:
-        print(f"Unexpected error getting email list: {e}")
+        logger.error(f"Unexpected error getting email list: {e}")
         
     return legal_emails
 
