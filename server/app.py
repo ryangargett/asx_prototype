@@ -762,7 +762,7 @@ def summarize_alerts() -> None:
         
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
-        email_content(html_compiled, f"⚠️Alert Update⚠️")
+        email_content(html_compiled, f"⚒Alert Update⚒")
         
         return html_compiled
         
@@ -825,7 +825,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚠️ALERT: ({ticker}) {results['drill_results']['title']}⚠️")
+                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
