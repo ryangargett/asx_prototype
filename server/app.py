@@ -96,9 +96,8 @@ except Exception as e:
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
 
-def get_email_list() -> list:
-    
-    """Returns a list of email addresses from Memberstack, filtered to only include those with the email-alerts custom field set
+def get_email_list() -> list[dict]:
+    """Returns a list of email addresses from Memberstack, filtered to only include those with email alerts enabled
     """
     
     headers = {
@@ -114,17 +113,26 @@ def get_email_list() -> list:
         member_data = response.get("data", {})
         if member_data:
             
+            emails = set()
             legal_emails = []
             
             for member in member_data:
-                has_alerts = member["customFields"].get("email-alerts", False)
-                if has_alerts:
-                    legal_emails.append(member["auth"]["email"])
+                alerts_enabled = member["customFields"].get("email-alerts", False)
+                if alerts_enabled:
+                    address = member["auth"]["email"]
+                    if address not in emails:
+                        emails.add(address)
+                        legal_emails.append({
+                            "name": member["customFields"].get("first-name", ""),
+                            "address": address
+                            })
                 else:
                     print("Received invalid member data from Memberstack")
                 
     except Exception as e:
         print(f"Unexpected error getting email list: {e}")
+        
+    return legal_emails
 
 def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dict:
     if os.path.exists(cache_path):
@@ -235,8 +243,8 @@ def email_content(content: str, title: str) -> None:
                     auth=("api", mailgun_key),
                     data={
                         "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
-                        "to": f"<{email}>",
-                        "subject": title,
+                        "to": f"<{email['address']}>",
+                        "subject": f"{email['name']} - {title}",
                         "html": content
                     }
                 )
