@@ -108,7 +108,12 @@ def get_email_list() -> list[dict]:
     try:
         response = requests.get(
             "https://admin.memberstack.com/members", headers=headers)
+        
+        response.raise_for_status()
+        
         response = response.json()
+        
+        response.raise_for_status()
         
         member_data = response.get("data", {})
         if member_data:
@@ -117,8 +122,8 @@ def get_email_list() -> list[dict]:
             legal_emails = []
             
             for member in member_data:
-                alerts_enabled = member["customFields"].get("email-alerts", False)
-                if alerts_enabled:
+                alerts_enabled = member["customFields"].get("email-alerts", "false")
+                if alerts_enabled == "true":
                     address = member["auth"]["email"]
                     if address not in emails:
                         emails.add(address)
