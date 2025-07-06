@@ -30,7 +30,7 @@
       <mj-section>
         <mj-column>
           <mj-text mj-class="email-header">
-            ⚠️Our systems detected a potentially significant announcement from {{ article_meta.company }} ({{ article_meta.ticker }})⚠️
+            ⚒Our systems detected a potentially significant announcement from {{ article_meta.company }} ({{ article_meta.ticker }})⚒
           </mj-text>
         </mj-column>
       </mj-section>
@@ -111,13 +111,17 @@
           <mj-text mj-class="alert-description">
             {{ alert_meta.drill_results.technical }}
           </mj-text>
-
-          <mj-text mj-class="alert-subheading">
-            Investor Summary
+          
+          {% if alert_meta.drill_results.quote != "N/A" %}
+          <mj-text padding="20px 0 10px 0">
+            <div style="font-size:16px; line-height:24px; padding:20px 20px 20px 30px; background-color:#faf8f2; border-left:4px solid #bf9b30; font-style:italic; color:#555555;">
+              {{ alert_meta.drill_results.quote_content}}
+            </div>
+            <div style="font-size:14px; line-height:20px; padding:5px 30px 0 0; text-align:right; color:#777777; font-style:normal;">
+              — {{alert_meta.drill_results.quote_name}}, {{alert_meta.drill_results.quote_position}}
+            </div>
           </mj-text>
-          <mj-text mj-class="alert-description">
-            {{ alert_meta.drill_results.investor }}
-          </mj-text>
+          {% endif %}
 
           <mj-text mj-class="alert-subheading">
             Catalysts
