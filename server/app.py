@@ -159,6 +159,7 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
                     }
                 )
                 
+                response.raise_for_status()
                 items = response.json()["items"]
 
                 for item in items:
@@ -312,6 +313,7 @@ def reset_daily_announcements() -> None:
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure connecting to webflow connection: {e}")
@@ -512,6 +514,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure in uploading to webflow: {e}")
@@ -638,6 +641,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
                 "Content-Type": "application/json"
             }
         )
+            response.raise_for_status()
     except Exception as e:
         logger.error(f"Failure in dropping live item from webflow: {e}")
         
@@ -649,6 +653,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
                 "Content-Type": "application/json"
             }
         )
+            response.raise_for_status()
     except Exception as e:
         logger.error(f"Failure in deleting from webflow: {e}")
 
@@ -671,6 +676,7 @@ def drop_oldest(collection_id: str) -> None:
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure in uploading to webflow: {e}")
@@ -1124,6 +1130,8 @@ async def process_announcement(announcement: dict) -> None:
                         headers=headers, 
                         auth=auth
                     )
+                    
+                    response.raise_for_status()
                 
                     with open(f_name, "wb") as f:
                         f.write(response.content)
@@ -1194,6 +1202,7 @@ async def renew_announcements() -> None:
             "https://quoteapi.com/files/rtw/asx_news_today.json", 
             auth=(username, password)
         )
+        daily_announcements.raise_for_status()
         
         daily_announcements = list(daily_announcements.json())
         last_announcement = daily_announcements[0]
