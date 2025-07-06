@@ -108,6 +108,8 @@ def get_email_list() -> list[dict]:
     try:
         response = requests.get(
             "https://admin.memberstack.com/members", headers=headers)
+        
+        response.raise_for_status()
         response = response.json()
         
         member_data = response.get("data", {})
@@ -117,8 +119,8 @@ def get_email_list() -> list[dict]:
             legal_emails = []
             
             for member in member_data:
-                alerts_enabled = member["customFields"].get("email-alerts", False)
-                if alerts_enabled:
+                alerts_enabled = member["customFields"].get("email-alerts", "false")
+                if alerts_enabled == "true":
                     address = member["auth"]["email"]
                     if address not in emails:
                         emails.add(address)
@@ -157,6 +159,7 @@ def cache_collection(collection_id: str, key_field: str, cache_path: str) -> dic
                     }
                 )
                 
+                response.raise_for_status()
                 items = response.json()["items"]
 
                 for item in items:
@@ -310,6 +313,7 @@ def reset_daily_announcements() -> None:
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure connecting to webflow connection: {e}")
@@ -510,6 +514,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure in uploading to webflow: {e}")
@@ -636,6 +641,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
                 "Content-Type": "application/json"
             }
         )
+            response.raise_for_status()
     except Exception as e:
         logger.error(f"Failure in dropping live item from webflow: {e}")
         
@@ -647,6 +653,7 @@ def delete_item(collection_id: str, item_id: str) -> None:
                 "Content-Type": "application/json"
             }
         )
+            response.raise_for_status()
     except Exception as e:
         logger.error(f"Failure in deleting from webflow: {e}")
 
@@ -669,6 +676,7 @@ def drop_oldest(collection_id: str) -> None:
                 "offset": offset
             }
         )
+            response.raise_for_status()
             
         except Exception as e:
             logger.error(f"Failure in uploading to webflow: {e}")
@@ -799,8 +807,20 @@ def _format_assay(drill_metrics: dict) -> str:
     formatted_assay += f" from {drill_metrics['drill_depth_standardized']} m"
     logger.info(formatted_assay)
     return formatted_assay
+
+def _is_significant(drill_score: float, market_cap: float) -> bool:
+    significant = False
+
+    if drill_score >= 200: # high yield
+        significant = True
+    elif drill_score >= 10 and market_cap <= 1e7: # low yield BUT low market cap (< 10M)
+        significant = True
+    elif drill_score >= 50 and market_cap >= 1e8: # medium yield and high market cap (>100M)
+        significant = True
+    
+    return significant
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float, score_threshold: int = 100, market_cap_threshold: int = 1e8) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
     
     logger.info(report_type)
@@ -808,9 +828,9 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
     if results:
         
         market_cap_formatted = _format_market_cap(market_cap)
-        keywords = ["first", "maiden", "explor"]
+        #keywords = ["first", "maiden", "explor"]
         
-        if results["drill_score"] >= score_threshold or market_cap <= market_cap_threshold or any(keyword in report_type.lower() for keyword in keywords):
+        if _is_significant(results["drill_score"], market_cap):
             results["drill_score"] = int(results["drill_score"])
             assay = _format_assay(results["drill_metrics"])
             
@@ -835,6 +855,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
+                    "materials": results["drill_materials"],
                 })
                 
                 return html_compiled
@@ -1110,6 +1131,8 @@ async def process_announcement(announcement: dict) -> None:
                         headers=headers, 
                         auth=auth
                     )
+                    
+                    response.raise_for_status()
                 
                     with open(f_name, "wb") as f:
                         f.write(response.content)
@@ -1180,6 +1203,7 @@ async def renew_announcements() -> None:
             "https://quoteapi.com/files/rtw/asx_news_today.json", 
             auth=(username, password)
         )
+        daily_announcements.raise_for_status()
         
         daily_announcements = list(daily_announcements.json())
         last_announcement = daily_announcements[0]
@@ -1332,9 +1356,12 @@ def _format_market_cap(market_cap: int):
     else:
         return f"{market_cap}"
     
-def get_drill_score(assay_metrics: dict) -> float:
+def get_drill_score(assay_metrics: dict) -> dict:
     
-    drill_score = 0.0
+    drill_score = {
+        "score": 0.0,
+        "materials": []
+    }
     if assay_metrics["drill_width_standardized"] and assay_metrics["standardized_materials"] and assay_metrics["drill_depth_standardized"]:
         drill_width_standardized = assay_metrics["drill_width_standardized"]
         standardized_materials = assay_metrics["standardized_materials"]
@@ -1348,6 +1375,7 @@ def get_drill_score(assay_metrics: dict) -> float:
         for material, value in standardized_materials.items():
             metal_doc = metals.find_one({"name": material})
             if metal_doc and "adjusted_price" in metal_doc:
+                drill_score["materials"].append(material)
                 material_value = round(metal_doc["adjusted_price"] * value, 4)
             else:
                 logger.warning(f"Received assay with unknown material {material}, defaulting to gold")
@@ -1359,7 +1387,7 @@ def get_drill_score(assay_metrics: dict) -> float:
         gold_equivalent = round(total_value / gold_price, 4)
         gxm = gold_equivalent * drill_width_standardized
         #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
-        drill_score = gxm #TODO: Eventually work in modifier once client is happy
+        drill_score["score"] = gxm #TODO: Eventually work in modifier once client is happy
     else:
         logger.warning("Received incomplete assay format, skipping....")
     
@@ -1379,6 +1407,7 @@ async def get_announcement_type(path: str, ticker: str) -> str:
 async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
         "drill_metrics": None,
+        "drill_materials": [],
         "drill_score": 0.0,
         "drill_results": None
     }
@@ -1400,7 +1429,9 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         attempt += 1
         if results["drill_metrics"] is not None:
             logger.info("Concluded assay analysis")
-            results["drill_score"] = get_drill_score(results["drill_metrics"])
+            drill_score = get_drill_score(results["drill_metrics"])
+            results["drill_score"] = drill_score["score"]
+            results["drill_materials"] = drill_score["materials"]
         else:
             logger.error("Unexpected error occured when analyzing drill results, retrying....")
         
@@ -1411,15 +1442,17 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
         results["drill_results"] = {
             "technical": "",
-            "investor": "",
             "title": "",
+            "quote_name": "Unknown",
+            "quote_position": "Unknown",
+            "quote_content": "N/A",
             "project_name": "",
             "prospect_name": "",
             "project_region": "",
         }
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Any HOLE XX should be positioned last in the list, and take into account the number of holes beforehand (for example, if two holes of IDs 123 and 456 and provided, a third unnamed hole should be labelled as ;<b>HOLE 03</b>) Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
     
     
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
@@ -1429,7 +1462,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         results["drill_results"]["significant_assays"] = significant_holes
         
         system_prompt = f"You are a highly intelligent AI model trained to provide detailed technical summaries for company drilling reports."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 100 words.\n\nDOCUMENT: {full_content}"
         
         logger.info(f"Constructing detailed technical summary for {ticker}")
         
@@ -1437,14 +1470,16 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
         results["drill_results"]["technical"] = summarized
         
+        '''
         system_prompt = f"You are a highly intelligent AI model trained to provide summaries for company announcements targeted towards investors."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a a summary of how these findings could impact the company's valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader #viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as #paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
         
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         results["drill_results"]["investor"] = summarized
+        '''
         
         system_prompt = f"You are a highly intelligent AI model trained to provide projections and potential future actions based on company announcements targeted towards investors."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Based on the findings from this document and the general state of the industry that the company operates in, provide a summary of what future actions the company could take based on the findings in this report, and how this may impact its' future performance and valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 200 words.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Based on the findings from this document and the general state of the industry that the company operates in, provide a summary of what future actions the company could take based on the findings in this report, and how this may impact its' future performance and valuation on the australian stock exchange. This should be targeted towards a trader / potential investor in the company with an intermediate to advanced level of experience. The summary should be formatted so that it directly addresses the trader viewing this summary however it should NEVER mention the trader by name or title (e.g. avoid using 'The Trader' or 'A Trader'). Do not use bullet points or subheadings, only format as paragraph(s). Do not include assays in this summary. Do not exceed 100 words.\n\nDOCUMENT: {full_content}"
         
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         results["drill_results"]["projection"] = summarized
@@ -1461,7 +1496,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
         
         project_details = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-        project_details = project_details.split(";")
+        project_details = project_details.strip().split(";")
         
         if len(project_details) == 3:
             results["drill_results"]["project_name"] = project_details[0]
@@ -1471,6 +1506,20 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
             results["drill_results"]["project_name"] = "N/A"
             results["drill_results"]["prospect_name"] = "N/A"
             results["drill_results"]["project_region"] = "N/A"
+            
+            
+        system_prompt = f"You are a highly intelligent AI model trained to extract key quotes from drilling reports."
+        prompt = f"The following is a drilling report from company with ASX ticker: {ticker} published recently. Please attempt to extract a relevant quote from a relevant stakeholder. Format this quote as <PERSON> | <POSITION> | <QUOTE>. If no name or person is provided, simply use Unknown. If no relevant quote can be extracted only reply with 'N/A'. Only provide the quote with no justification or additional text. Do not attempt to generate a quote that isn't part of the report or from a relevant stakeholder. If multiple quotes are detected only return the most relevant quote.\n\nDOCUMENT: {content}"
+        
+        detected_quote = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        
+        quote_components = detected_quote.strip().split("|")
+        
+        if len(quote_components) == 3:
+            results["drill_results"]["quote_name"] = quote_components[0].strip()
+            results["drill_results"]["quote_position"] = quote_components[1].strip()
+            results["drill_results"]["quote_content"] = quote_components[2].strip()
+        
     else:
         logger.error(f"Could not extract drill assay within maximum allowed attempts, skipping....")
         

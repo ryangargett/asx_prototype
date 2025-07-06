@@ -34,6 +34,7 @@ def _get_prices(symbols: list) -> dict:
             "https://metals-api.com/api/latest", 
             params=params
         )
+        response.raise_for_status()
         data = response.json()
     except Exception as e:
         logger.error(f"Unexpected error fetching metal prices: {e}")
@@ -57,12 +58,29 @@ def update_metal_prices() -> None:
             if symbol in symbols_batch:
                 
                 try:
-                    price = 1 / price # ensure price is properly converted to $ / unit
-                    cf = metals.find_one({"symbol": symbol})["cf"]
-                    metals.update_one({"symbol": symbol}, {"$set": {"price": round(price, 4),
-                                                                    "adjusted_price": round((price / cf), 4)}})
+                    price = 1 / price  # ensure price is properly converted to $ / unit
+                    metal = metals.find_one({"symbol": symbol})
+                    
+                    last_price = metal.get("adjusted_price", 0.0) # retrieve previous update's price for pct change etc.
+                    if last_price is None:
+                        last_price = 0.0
+                    
+                    new_price = round(price, 4)
+                    new_adjusted_price = round((price / metal["cf"]), 4)
+                    
+                    metals.update_one(
+                        {"symbol": symbol},
+                        {"$set": {
+                            "price": new_price,
+                            "adjusted_price": new_adjusted_price,
+                            "last_price": last_price
+                        }}
+                    )
                     num_successful += 1
                 except Exception as e:
                     logger.error(f"Error updating {symbol}: {e}")
                     
     logger.info(f"Successfully updated {num_successful} / {len(symbols)} commodities")
+    
+if __name__ == "__main__":
+    update_metal_prices()
