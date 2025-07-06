@@ -855,6 +855,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
+                    "materials": results["drill_materials"],
                 })
                 
                 return html_compiled
