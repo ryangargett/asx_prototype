@@ -110,10 +110,7 @@ def get_email_list() -> list[dict]:
             "https://admin.memberstack.com/members", headers=headers)
         
         response.raise_for_status()
-        
         response = response.json()
-        
-        response.raise_for_status()
         
         member_data = response.get("data", {})
         if member_data:
@@ -1349,9 +1346,12 @@ def _format_market_cap(market_cap: int):
     else:
         return f"{market_cap}"
     
-def get_drill_score(assay_metrics: dict) -> float:
+def get_drill_score(assay_metrics: dict) -> dict:
     
-    drill_score = 0.0
+    drill_score = {
+        "score": 0.0,
+        "materials": []
+    }
     if assay_metrics["drill_width_standardized"] and assay_metrics["standardized_materials"] and assay_metrics["drill_depth_standardized"]:
         drill_width_standardized = assay_metrics["drill_width_standardized"]
         standardized_materials = assay_metrics["standardized_materials"]
@@ -1365,6 +1365,7 @@ def get_drill_score(assay_metrics: dict) -> float:
         for material, value in standardized_materials.items():
             metal_doc = metals.find_one({"name": material})
             if metal_doc and "adjusted_price" in metal_doc:
+                drill_score["materials"].append(material)
                 material_value = round(metal_doc["adjusted_price"] * value, 4)
             else:
                 logger.warning(f"Received assay with unknown material {material}, defaulting to gold")
@@ -1376,7 +1377,7 @@ def get_drill_score(assay_metrics: dict) -> float:
         gold_equivalent = round(total_value / gold_price, 4)
         gxm = gold_equivalent * drill_width_standardized
         #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
-        drill_score = gxm #TODO: Eventually work in modifier once client is happy
+        drill_score["score"] = gxm #TODO: Eventually work in modifier once client is happy
     else:
         logger.warning("Received incomplete assay format, skipping....")
     
@@ -1396,6 +1397,7 @@ async def get_announcement_type(path: str, ticker: str) -> str:
 async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
         "drill_metrics": None,
+        "drill_materials": [],
         "drill_score": 0.0,
         "drill_results": None
     }
@@ -1417,7 +1419,9 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         attempt += 1
         if results["drill_metrics"] is not None:
             logger.info("Concluded assay analysis")
-            results["drill_score"] = get_drill_score(results["drill_metrics"])
+            drill_score = get_drill_score(results["drill_metrics"])
+            results["drill_score"] = drill_score["score"]
+            results["drill_materials"] = drill_score["materials"]
         else:
             logger.error("Unexpected error occured when analyzing drill results, retrying....")
         
@@ -1428,8 +1432,10 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
         results["drill_results"] = {
             "technical": "",
-            "investor": "",
             "title": "",
+            "quote_name": "Unknown",
+            "quote_position": "Unknown",
+            "quote_content": "N/A",
             "project_name": "",
             "prospect_name": "",
             "project_region": "",
@@ -1480,7 +1486,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
         
         project_details = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-        project_details = project_details.split(";")
+        project_details = project_details.strip().split(";")
         
         if len(project_details) == 3:
             results["drill_results"]["project_name"] = project_details[0]
@@ -1490,6 +1496,20 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
             results["drill_results"]["project_name"] = "N/A"
             results["drill_results"]["prospect_name"] = "N/A"
             results["drill_results"]["project_region"] = "N/A"
+            
+            
+        system_prompt = f"You are a highly intelligent AI model trained to extract key quotes from drilling reports."
+        prompt = f"The following is a drilling report from company with ASX ticker: {ticker} published recently. Please attempt to extract a relevant quote from a relevant stakeholder. Format this quote as <PERSON> | <POSITION> | <QUOTE>. If no name or person is provided, simply use Unknown. If no relevant quote can be extracted only reply with 'N/A'. Only provide the quote with no justification or additional text. Do not attempt to generate a quote that isn't part of the report or from a relevant stakeholder. If multiple quotes are detected only return the most relevant quote.\n\nDOCUMENT: {content}"
+        
+        detected_quote = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        
+        quote_components = detected_quote.strip().split("|")
+        
+        if len(quote_components) == 3:
+            results["drill_results"]["quote_name"] = quote_components[0].strip()
+            results["drill_results"]["quote_position"] = quote_components[1].strip()
+            results["drill_results"]["quote_content"] = quote_components[2].strip()
+        
     else:
         logger.error(f"Could not extract drill assay within maximum allowed attempts, skipping....")
         
