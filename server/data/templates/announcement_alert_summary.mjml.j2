@@ -8,7 +8,6 @@
       <mj-class name="alert-card" background-color="#ffffff" padding="0" margin="10px 0" border-radius="8px" box-shadow="0 2px 8px rgba(0,0,0,0.1)" />
       <mj-class name="alert-subheading" align="center" font-size="18px" font-weight="bold" line-height="20px" padding="15px 0" color="#bf9b30"/>
       
-      <!-- New classes for tables -->
       <mj-class name="table-header" font-size="12px" font-weight="bold" padding="12px 15px" background-color="#f8f8f8" color="#2C2C2C" />
       <mj-class name="table-cell" font-size="13px" padding="12px 15px" line-height="18px" border-bottom="1px solid #eeeeee" />
       <mj-class name="table-row" background-color="#ffffff" />
@@ -94,16 +93,16 @@
         <mj-column width="100%">
           <mj-table cellpadding="0" width="100%">
             <tr style="border-bottom: 2px solid #eeeeee;">
-              <th mj-class="table-header" style="text-align:left; width:30%;">
+              <th mj-class="table-header" style="text-align:left; width:25%;">
                 Metal
               </th>
               <th mj-class="table-header" style="text-align:left; width:25%;">
                 Raw Price
               </th>
               <th mj-class="table-header" style="text-align:left; width:25%;">
-                Standardized Price
+                Raw Change
               </th>
-              <th mj-class="table-header" style="text-align:left; width:20%;">
+              <th mj-class="table-header" style="text-align:left; width:25%;">
                 % Change
               </th>
             </tr>
@@ -113,10 +112,10 @@
                   <span style="font-weight: bold;">{{ metal.name }}</span>
                 </td>
                 <td mj-class="table-cell">
-                  ${{ metal.price }} / {{ metal.unit}}
+                  ${{ metal.price }} / <b>{{ metal.unit}}</b>
                 </td>
-                <td mj-class="table-cell">
-                  ${{ metal.adjusted_price }} / g
+                <td mj-class="table-cell" style="{% if metal.raw_change < 0 %}color: #e74c3c;{% elif metal.raw_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
+                  {{ metal.raw_change }}
                 </td>
                 <td mj-class="table-cell" style="{% if metal.pct_change < 0 %}color: #e74c3c;{% elif metal.pct_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
                   {{ metal.pct_change }}%

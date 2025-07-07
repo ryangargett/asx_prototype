@@ -69,6 +69,7 @@ documents = db["documents_new_3"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
+db['metals'].aggregate([{"$out": "metals_backup"}])
 alerts = db["alerts"]
 
 # check if s3 connection can be established
@@ -757,6 +758,25 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         
     return slug
 
+def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
+    '''Converts metal prices to oz or lb depending on the metal type, based on popular tabular data formats'''
+    if metal in ["Gold", "Palladium", "Platinum", "Silver"]:
+        if unit == "toz":
+            return price / 1.09714, "oz"
+        else:
+            return price, "oz"
+    elif metal in ["Iron"]:
+        if unit == "oz":
+            return price * 35273.96, "mt"
+        return price * 31.1034768
+    else: # base case: convert to / lb
+        if unit == "toz":
+            return price * 14.5833, "lb"
+        elif unit == "oz":
+            return price * 16, "lb"
+        else:
+            return price, "lb"
+
 def summarize_alerts() -> None:
     global num_sensitive
     alert_list = list(alerts.find({}))
@@ -767,6 +787,7 @@ def summarize_alerts() -> None:
         "Copper",
         "Gold",
         "Iron",
+        "Lithium"
         "Magnesium",
         "Molybdenum",
         "Nickel",
@@ -777,7 +798,14 @@ def summarize_alerts() -> None:
         "Zinc"
     ]
     
-    screened_metals = [metal for metal in metal_list if metal["name"] in legal_metals]
+    screened_metals = []
+
+    for metal in metal_list:
+        if metal["name"] in legal_metals:
+            metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
+            metal["price"] = round(metal["price"], 2)
+            screened_metals.append(metal)
+        
     
     try:
         mjml_src = announcement_alert_summary_template.render(
@@ -1620,5 +1648,4 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host="0.0.0.0", port=8000)
-    summarize_alerts()
+    uvicorn.run(app, host="0.0.0.0", port=8000)

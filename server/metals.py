@@ -70,7 +70,8 @@ def update_metal_prices() -> None:
                     new_price = round(price, 4)
                     new_adjusted_price = round((price / metal["cf"]), 4)
                     
-                    pct_change = round(((new_price - last_price) / (last_price + 1e-9)) * 100, 4) # avoid division by 0
+                    raw_change = round(new_price - last_price, 2)
+                    pct_change = round(((new_price - last_price) / (last_price + 1e-9)) * 100, 2) # avoid division by 0
                     
                     metals.update_one(
                         {"symbol": symbol},
@@ -78,6 +79,7 @@ def update_metal_prices() -> None:
                             "price": new_price,
                             "adjusted_price": new_adjusted_price,
                             "last_price": last_price,
+                            "raw_change": raw_change,
                             "pct_change": pct_change
                         }}
                     )
