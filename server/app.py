@@ -1557,7 +1557,7 @@ async def lifespan(app: FastAPI):
         update_metal_prices,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour=6,
+        hour="6,14",
         minute=30,
         max_instances=1,
         name="update_metal_prices"
@@ -1618,4 +1618,4 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    summarize_alerts()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
