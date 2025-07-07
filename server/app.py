@@ -815,8 +815,6 @@ def summarize_alerts() -> None:
             num_sensitive = num_sensitive,
         )
         
-        print(mjml_src)
-        
         compiled = mjml_to_html(mjml_src)
         html_compiled = compiled.html
         email_content(html_compiled, f"⚒Alert Update⚒")
