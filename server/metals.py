@@ -3,6 +3,8 @@ import json
 import os
 import requests
 
+import random
+
 from pymongo import MongoClient
 
 from dotenv import load_dotenv
@@ -61,19 +63,24 @@ def update_metal_prices() -> None:
                     price = 1 / price  # ensure price is properly converted to $ / unit
                     metal = metals.find_one({"symbol": symbol})
                     
-                    last_price = metal.get("adjusted_price", 0.0) # retrieve previous update's price for pct change etc.
+                    last_price = metal.get("price", 0.0) # retrieve previous update's price for pct change etc.
                     if last_price is None:
                         last_price = 0.0
                     
                     new_price = round(price, 4)
                     new_adjusted_price = round((price / metal["cf"]), 4)
                     
+                    raw_change = round(new_price - last_price, 2)
+                    pct_change = round(((new_price - last_price) / (last_price + 1e-9)) * 100, 2) # avoid division by 0
+                    
                     metals.update_one(
                         {"symbol": symbol},
                         {"$set": {
                             "price": new_price,
                             "adjusted_price": new_adjusted_price,
-                            "last_price": last_price
+                            "last_price": last_price,
+                            "raw_change": raw_change,
+                            "pct_change": pct_change
                         }}
                     )
                     num_successful += 1

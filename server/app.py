@@ -69,6 +69,7 @@ documents = db["documents_new_3"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
+db['metals'].aggregate([{"$out": "metals_backup"}])
 alerts = db["alerts"]
 
 # check if s3 connection can be established
@@ -247,7 +248,7 @@ def email_content(content: str, title: str) -> None:
                     data={
                         "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
                         "to": f"<{email['address']}>",
-                        "subject": f"{email['name']} - {title}",
+                        "subject": f"METAL PRICES TEST: {email['name']} - {title}",
                         "html": content
                     }
                 )
@@ -757,13 +758,59 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
         
     return slug
 
+def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
+    '''Converts metal prices to oz or lb depending on the metal type, based on popular tabular data formats'''
+    if metal in ["Gold", "Palladium", "Platinum", "Silver"]:
+        if unit == "toz":
+            return price / 1.09714, "oz"
+        else:
+            return price, "oz"
+    elif metal in ["Iron"]:
+        if unit == "oz":
+            return price * 35273.96, "mt"
+        return price * 31.1034768
+    else: # base case: convert to / lb
+        if unit == "toz":
+            return price * 14.5833, "lb"
+        elif unit == "oz":
+            return price * 16, "lb"
+        else:
+            return price, "lb"
+
 def summarize_alerts() -> None:
     global num_sensitive
     alert_list = list(alerts.find({}))
+    metal_list = list(metals.find({}))
+
+    legal_metals = [
+        "Aluminium",
+        "Copper",
+        "Gold",
+        "Iron",
+        "Lithium"
+        "Magnesium",
+        "Molybdenum",
+        "Nickel",
+        "Palladium",
+        "Platinum",
+        "Silver",
+        "Uranium",
+        "Zinc"
+    ]
+    
+    screened_metals = []
+
+    for metal in metal_list:
+        if metal["name"] in legal_metals:
+            metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
+            metal["price"] = round(metal["price"], 2)
+            screened_metals.append(metal)
+        
     
     try:
         mjml_src = announcement_alert_summary_template.render(
             alerts = alert_list,
+            metals = screened_metals,
             num_alerts = len(alert_list),
             num_sensitive = num_sensitive,
         )
@@ -1452,7 +1499,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         }
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Any HOLE XX should be positioned last in the list, and take into account the number of holes beforehand (for example, if two holes of IDs 123 and 456 and provided, a third unnamed hole should be labelled as ;<b>HOLE 03</b>) Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Any HOLE XX should be positioned last in the list, and take into account the number of holes beforehand, for example: if two holes of IDs <b>HOLE_123</b> and <b>HOLE_456</b> are provided, a third unnamed hole should be labelled as ;<b>HOLE 03</b>. Only provide up to the four most significant holes. Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
     
     
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
@@ -1538,7 +1585,7 @@ async def lifespan(app: FastAPI):
         update_metal_prices,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour=6,
+        hour="6,14",
         minute=30,
         max_instances=1,
         name="update_metal_prices"
