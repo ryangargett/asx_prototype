@@ -760,10 +760,29 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
 def summarize_alerts() -> None:
     global num_sensitive
     alert_list = list(alerts.find({}))
+    metal_list = list(metals.find({}))
+
+    legal_metals = [
+        "Aluminium",
+        "Copper",
+        "Gold",
+        "Iron",
+        "Magnesium",
+        "Molybdenum",
+        "Nickel",
+        "Palladium",
+        "Platinum",
+        "Silver",
+        "Uranium",
+        "Zinc"
+    ]
+    
+    screened_metals = [metal for metal in metal_list if metal["name"] in legal_metals]
     
     try:
         mjml_src = announcement_alert_summary_template.render(
             alerts = alert_list,
+            metals = screened_metals,
             num_alerts = len(alert_list),
             num_sensitive = num_sensitive,
         )
@@ -1599,4 +1618,4 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    summarize_alerts()
