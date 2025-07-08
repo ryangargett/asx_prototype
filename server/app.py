@@ -867,7 +867,7 @@ def _is_significant(drill_score: float, market_cap: float) -> bool:
     
     return significant
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: dict, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
     
     logger.info(report_type)
@@ -904,6 +904,20 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "document_url": article_meta["document"],
                     "materials": results["drill_materials"],
                 })
+                
+                article_id = search_collection(os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID"), article_meta["title"], suppress_warning=False)
+                if article_id:
+                    
+                    fieldData = {
+                        "name": results["drill_results"]["title"],
+                        "result-company": article_meta["company_id"],
+                        "result-datetime": article_meta["formatted_datetime"],
+                        "assay": assay,
+                        "result-article": article_id,
+                        "result-document": article_meta["document"],
+                    }
+                    
+                    push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
                 return html_compiled
                 
@@ -1014,8 +1028,10 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                         "document": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
                         "ticker": ticker,
                         "company": stock_data["name"],
+                        "company_id": ticker_id,
                         "image": cover_image,
-                        "summary": generated["email_summary"]
+                        "summary": generated["email_summary"],
+                        "datetime": formatted_datetime
                     }
                 
                     await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
@@ -1453,7 +1469,6 @@ async def get_announcement_type(path: str, ticker: str) -> str:
 def format_assay_hole_list(assays: str, max_assays: int = 5) -> str:
     
     assay_list = assays.split("\n")
-    print(assay_list)
     holes = {}
     formatted_hole_list = ""
     
@@ -1529,7 +1544,11 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, return N/A.\n\nDOCUMENT: {full_content}"
 
         significant_assays = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-        formatted_assay_list = format_assay_hole_list(significant_assays)
+        if significant_assays == "N/A":
+            formatted_assay_list = significant_assays
+        else:
+            formatted_assay_list = format_assay_hole_list(significant_assays)
+            
         results["drill_results"]["significant_assays"] = formatted_assay_list
         
         system_prompt = f"You are a highly intelligent AI model trained to provide detailed technical summaries for company drilling reports."
