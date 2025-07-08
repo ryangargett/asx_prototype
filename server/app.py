@@ -248,7 +248,7 @@ def email_content(content: str, title: str) -> None:
                     data={
                         "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
                         "to": f"<{email['address']}>",
-                        "subject": f"METAL PRICES TEST: {email['name']} - {title}",
+                        "subject": f"{email['name']} - {title}",
                         "html": content
                     }
                 )
@@ -867,7 +867,7 @@ def _is_significant(drill_score: float, market_cap: float) -> bool:
     
     return significant
         
-async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: str, market_cap: float) -> str:
+async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: dict, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
     
     logger.info(report_type)
@@ -904,6 +904,20 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "document_url": article_meta["document"],
                     "materials": results["drill_materials"],
                 })
+                
+                article_id = search_collection(os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID"), article_meta["title"], suppress_warning=False)
+                if article_id:
+                    
+                    fieldData = {
+                        "name": results["drill_results"]["title"],
+                        "result-company": article_meta["company_id"],
+                        "result-datetime": article_meta["formatted_datetime"],
+                        "assay": assay,
+                        "result-article": article_id,
+                        "result-document": article_meta["document"],
+                    }
+                    
+                    push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
                 return html_compiled
                 
@@ -1014,8 +1028,10 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                         "document": f"https://rtwasxreports.s3.ap-southeast-2.amazonaws.com/{announcement_hash}.pdf",
                         "ticker": ticker,
                         "company": stock_data["name"],
+                        "company_id": ticker_id,
                         "image": cover_image,
-                        "summary": generated["email_summary"]
+                        "summary": generated["email_summary"],
+                        "datetime": formatted_datetime
                     }
                 
                     await format_alert(file_path, ticker, announcement_type, article_meta, stock_data["cap"])
@@ -1449,7 +1465,30 @@ async def get_announcement_type(path: str, ticker: str) -> str:
     prompt = f"The following is a drilling report from company with ASX ticker: {ticker} published recently. Please classify the document into the type of drilling report. Format the report type as simply as possible, for example First Pass Drilling instead of First Pass Drilling Report (JORC-compliant). If the report cannot be classified only reply with 'N/A'. Only provide the classification with no justification or additional text.\n\nDOCUMENT: {content}"
     announcement_type = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
     return announcement_type
+
+def format_assay_hole_list(assays: str, max_assays: int = 5) -> str:
     
+    assay_list = assays.split("\n")
+    holes = {}
+    formatted_hole_list = ""
+    
+    for assay in assay_list[:max_assays + 1]:
+        assay_components = assay.strip().split("|")
+        if len(assay_components) == 2:
+            results = f"<li>{assay_components[0].strip()}</li>"
+            hole_id = assay_components[1].strip()
+             
+            if hole_id not in holes:
+                holes[hole_id] = results
+            else:
+                holes[hole_id] += results
+           
+    for key, value in holes.items(): 
+        formatted_hole_list += f"<b>{key}</b>{value}"
+       
+    formatted_hole_list = formatted_hole_list.replace("<b>N/A</b>", "<b>Untagged</b>") # LLM MOST LIKELY aligned to returning 'N/A' for exceptions / erraneous output, so easier to just fix in the post-format stage rather than relying on the LLM to do it
+            
+    return formatted_hole_list 
 
 async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
@@ -1488,6 +1527,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         full_content = read_pdf(path)
         
         results["drill_results"] = {
+            "significant_assays": "",
             "technical": "",
             "title": "",
             "quote_name": "Unknown",
@@ -1498,20 +1538,21 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
             "project_region": "",
         }
         
+        logger.info(f"Constructing detailed technical summary for {ticker}")
+        
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as <li>WIDTH @ MATERIALS from ENDING DEPTH</li>. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Group assays by hole ID, which should be formatted as ;<b>HOLE_ID</b>. If no ID is provided, simply label the hole as ';<b>HOLE XX</b>' where XX is the hole number (e.g 2nd hole -> ;<b>HOLE 02</b>). Any HOLE XX should be positioned last in the list, and take into account the number of holes beforehand, for example: if two holes of IDs <b>HOLE_123</b> and <b>HOLE_456</b> are provided, a third unnamed hole should be labelled as ;<b>HOLE 03</b>. Only provide up to the four most significant holes. Do not provide any additional text in the response.\n\nDOCUMENT: {content}"
-    
-    
-        summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
-        significant_holes = summarized.split(";")
-        if significant_holes[0] == "":
-            significant_holes = significant_holes[1:]
-        results["drill_results"]["significant_assays"] = significant_holes
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, return N/A.\n\nDOCUMENT: {full_content}"
+
+        significant_assays = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
+        if significant_assays == "N/A":
+            formatted_assay_list = significant_assays
+        else:
+            formatted_assay_list = format_assay_hole_list(significant_assays)
+            
+        results["drill_results"]["significant_assays"] = formatted_assay_list
         
         system_prompt = f"You are a highly intelligent AI model trained to provide detailed technical summaries for company drilling reports."
         prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please provide a detailed technical summary for the report. This summary should include the key findings of the report as well as a justification for why the findings are important and significant. Only provide the summary with no reference to the provided content. Do not use bullet points or subheadings, only format as paragraph(s). Do not exceed 100 words.\n\nDOCUMENT: {full_content}"
-        
-        logger.info(f"Constructing detailed technical summary for {ticker}")
         
         summarized = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         
@@ -1556,7 +1597,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
             
             
         system_prompt = f"You are a highly intelligent AI model trained to extract key quotes from drilling reports."
-        prompt = f"The following is a drilling report from company with ASX ticker: {ticker} published recently. Please attempt to extract a relevant quote from a relevant stakeholder. Format this quote as <PERSON> | <POSITION> | <QUOTE>. If no name or person is provided, simply use Unknown. If no relevant quote can be extracted only reply with 'N/A'. Only provide the quote with no justification or additional text. Do not attempt to generate a quote that isn't part of the report or from a relevant stakeholder. If multiple quotes are detected only return the most relevant quote.\n\nDOCUMENT: {content}"
+        prompt = f"The following is a drilling report from company with ASX ticker: {ticker} published recently. Please attempt to extract a relevant quote from a relevant stakeholder. Format this quote as <PERSON> | <POSITION> | <QUOTE>. If no name or person is provided, simply use Unknown. If no relevant quote can be extracted only reply with 'N/A'. Only provide the quote with no justification or additional text. Do not attempt to generate a quote that isn't part of the report or from a relevant stakeholder. If multiple quotes are detected only return the most relevant quote.\n\nDOCUMENT: {full_content}"
         
         detected_quote = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         
@@ -1647,3 +1688,4 @@ async def read_root():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+    
