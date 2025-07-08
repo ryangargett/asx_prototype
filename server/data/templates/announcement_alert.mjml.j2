@@ -94,11 +94,9 @@
           <mj-text mj-class="alert-subheading">
             Technical Summary
           </mj-text>
-          {% for hole in alert_meta.drill_results.significant_assays %}
           <mj-text mj-class="alert-text">
-            {{ hole }}
+            {{ alert_meta.drill_results.significant_assays }}
           </mj-text>
-          {% endfor %}
           <mj-text mj-class="alert-description">
             {{ alert_meta.drill_results.technical }}
           </mj-text>
