@@ -99,6 +99,7 @@ requests-oauthlib==2.0.0
 rsa==4.9
 s3transfer==0.11.2
 scraperapi-sdk==1.5.3
+seaborn==0.13.2
 selenium==4.27.1
 sgmllib3k==1.0.0
 six==1.17.0
