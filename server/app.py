@@ -898,11 +898,14 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "ticker": ticker,
                     "market_cap": market_cap_formatted,
                     "assay": assay,
+                    "score": results["drill_score"],
                     "article_title": article_meta["title"],
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
                     "materials": results["drill_materials"],
+                    "project_name": results["drill_results"]["project_name"],
+                    "prospect_name": results["drill_results"]["prospect_name"],
                 })
                 
                 article_id = search_collection(os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID"), article_meta["title"], suppress_warning=False)
@@ -911,7 +914,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     fieldData = {
                         "name": results["drill_results"]["title"],
                         "result-company": article_meta["company_id"],
-                        "result-datetime": article_meta["formatted_datetime"],
+                        "result-datetime": article_meta["datetime"],
                         "assay": assay,
                         "result-article": article_id,
                         "result-document": article_meta["document"],
@@ -1503,7 +1506,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
     content = read_pdf(path, 1)
     
     system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m. If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m).\n\nDOCUMENT: {content}"
+    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m. If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). If no significant drill result assays are found, return N/A and nothing else.\n\nDOCUMENT: {content}"
     
     while attempt <= max_attempts and results["drill_score"] == 0.0:
         logger.info(f"Beginning assay analysis.... (attempt {attempt} / {max_attempts})")
@@ -1511,15 +1514,20 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         assay = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         logger.info(assay)
         
-        results["drill_metrics"] = get_assay_metrics(assay)
         attempt += 1
-        if results["drill_metrics"] is not None:
-            logger.info("Concluded assay analysis")
-            drill_score = get_drill_score(results["drill_metrics"])
-            results["drill_score"] = drill_score["score"]
-            results["drill_materials"] = drill_score["materials"]
+        
+        if assay.replace("$$", "") != "N/A":
+            results["drill_metrics"] = get_assay_metrics(assay)
+            if results["drill_metrics"] is not None:
+                logger.info("Concluded assay analysis")
+                drill_score = get_drill_score(results["drill_metrics"])
+                results["drill_score"] = drill_score["score"]
+                results["drill_materials"] = drill_score["materials"]
+            else:
+                logger.error("Unexpected error occured when analyzing drill results, retrying....")
         else:
-            logger.error("Unexpected error occured when analyzing drill results, retrying....")
+            logger.warning("No significant drill results found, skipping....")
+            attempt = max_attempts + 1 # skip rest of extraction process to avoid pointless overhead
         
     
     if results["drill_score"] > 0.0:
@@ -1541,7 +1549,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         logger.info(f"Constructing detailed technical summary for {ticker}")
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, return N/A.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, only return N/A.\n\nDOCUMENT: {full_content}"
 
         significant_assays = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         if significant_assays == "N/A":
