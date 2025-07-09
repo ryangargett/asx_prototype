@@ -25,8 +25,10 @@ import boto3 as b3
 from fastapi import FastAPI
 from jinja2 import Environment, FileSystemLoader
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from mjml import mjml_to_html
 from pymongo import MongoClient
+import seaborn as sns
 from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 from tweepy.asynchronous import AsyncClient
@@ -233,8 +235,116 @@ legal_tickers = get_legal_tickers()
 
 if legal_tickers:
     logger.info("Successfully loaded legal tickers from cache")
-def _get_curr_time():
-    return datetime.now(tz("Australia/Sydney"))
+
+def get_colour_from_commodity(commodity: str) -> str:
+    colour_map = {
+        "Gold": "#FFBB00",
+        "Silver": "#909090",
+        "Copper": "#B87333",
+        "Lead": "#333333",
+        "Zinc": "#668899",
+        "Iron": "#88340F",
+        "Nickel": "#CC3399",
+        "Molybdenum": "#3A6B8F",
+        "Uranium": "#008F00",
+        "Platinum": "#C1C1C1",
+        "Palladium": "#B0A090",
+        "Cobalt": "#0047AB",
+        "Tin": "#33CCCC",
+        "Lithium": "#FF6600",
+        "Neodymium": "#9900FF",
+        "Rhodium": "#009688"  
+    }
+
+    return colour_map.get(commodity, "#000000")
+
+def _gen_filename() -> str:
+    now = datetime.now(tz("Australia/Sydney"))
+    return now.strftime("%Y%m%d_%H%M%S.png")
+
+def plot_results_by_commodity() -> str:
+    try:
+        grouped_results = get_grouped_results_by_commodity()
+        
+        bar_thickness = 0.6
+        heights = [1 + max(len(data["results"]), 2) * 0.5 for data in grouped_results.values()]
+        
+        fig = plt.figure(figsize=(10, sum(heights)))
+        gs = GridSpec(len(grouped_results), 1, height_ratios=heights)
+        
+        for commodity_idx, (_, data) in enumerate(grouped_results.items()):
+            ax = fig.add_subplot(gs[commodity_idx])
+            
+            sns.barplot(x=data["scores"],
+                        y=data["results"],
+                        ax=ax,
+                        color=data["colour"],
+                        width=bar_thickness
+            )
+            
+            ax.set_title(data["title"], 
+                        fontsize=20,
+                        fontweight="bold", 
+                        color=data["colour"],
+                        loc="left",
+                        pad=10
+            )
+            
+            ax.set_xlim(0, max(data["scores"]))
+            ax.set_xticks([])
+            
+            labels = [item.get_text() for item in ax.get_yticklabels()]
+            ax.set_yticklabels(labels,
+                            fontsize=10,
+                            fontstyle="italic",
+                            color="#333333"
+            )
+            sns.despine(ax=ax, top=True, bottom=True, right=True)
+            
+            max_score = max(data["scores"])
+            for score_idx, (value, _) in enumerate(zip(data["scores"], data["results"])):
+                offset = max_score * 0.02
+                ax.text(value + offset, score_idx, f"{value:.1f}", 
+                    va="center",
+                    ha="left",
+                    fontsize=10,
+            )
+        
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.1)
+        
+        filename = _gen_filename()
+        
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+    except Exception as e:
+        logger.error(f"Error generating plot: {e}")
+        filename = None
+
+    return filename
+
+def get_grouped_results_by_commodity() -> dict:
+    
+    results = alerts.find({})
+    
+    grouped_results = {}
+    
+    for result in results:
+        for commodity in result["materials"]:
+            if commodity not in grouped_results:
+                grouped_results[commodity] = {
+                    "results": [],
+                    "scores": [],
+                    "colour": get_colour_from_commodity(commodity),
+                    "title": commodity
+                }
+            grouped_results[commodity]["results"].append(f"{result['ticker']}\n{result['project_name']}")
+            grouped_results[commodity]["scores"].append(result["score"])
+    
+    for data in grouped_results.values():
+        sorted_pairs = sorted(zip(data["scores"], data["results"]), key=lambda x: x[0])
+        data["scores"], data["results"] = zip(*sorted_pairs) if sorted_pairs else ([], [])
+        
+    return grouped_results
 
 def email_content(content: str, title: str) -> None:
     
@@ -807,12 +917,31 @@ def summarize_alerts() -> None:
             screened_metals.append(metal)
         
     
+    file = plot_results_by_commodity()
+    print(file)
+    if file:
+        try:
+            s3_client.upload_file(
+                file,
+                "rtwalerts",
+                file,
+                ExtraArgs = {
+                    "ContentType": "image/png",
+                    "ContentDisposition": "inline",
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed uploading file to S3: {e}")
+        finally:
+            _remove_file(file)
+    
     try:
         mjml_src = announcement_alert_summary_template.render(
             alerts = alert_list,
             metals = screened_metals,
             num_alerts = len(alert_list),
             num_sensitive = num_sensitive,
+            bar_file_path = f"https://rtwalerts.s3.ap-southeast-2.amazonaws.com/{file}" if file else ""
         )
         
         compiled = mjml_to_html(mjml_src)
@@ -878,7 +1007,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
         #keywords = ["first", "maiden", "explor"]
         
         if _is_significant(results["drill_score"], market_cap):
-            results["drill_score"] = int(results["drill_score"])
+            results["drill_score"] = round(results["drill_score"], 2)
             assay = _format_assay(results["drill_metrics"])
             
             try:
@@ -898,11 +1027,14 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "ticker": ticker,
                     "market_cap": market_cap_formatted,
                     "assay": assay,
+                    "score": results["drill_score"],
                     "article_title": article_meta["title"],
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
                     "materials": results["drill_materials"],
+                    "project_name": results["drill_results"]["project_name"],
+                    "prospect_name": results["drill_results"]["prospect_name"],
                 })
                 
                 article_id = search_collection(os.getenv("WEBFLOW_ARTICLE_COLLECTION_ID"), article_meta["title"], suppress_warning=False)
@@ -911,7 +1043,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     fieldData = {
                         "name": results["drill_results"]["title"],
                         "result-company": article_meta["company_id"],
-                        "result-datetime": article_meta["formatted_datetime"],
+                        "result-datetime": article_meta["datetime"],
                         "assay": assay,
                         "result-article": article_id,
                         "result-document": article_meta["document"],
@@ -1327,8 +1459,6 @@ def calc_drill_modifier(gxm: float, depth: float, gxm_threshold: float = 10.0, g
         gxm_penalty = 1
         
     gxm_reward = math.log1p(gxm) * gxm_coeff # ensure gxm doesn't overwhelm depth
-    
-
     modifier = depth_modifier * (gxm_reward * gxm_penalty)
 
     return modifier
@@ -1503,7 +1633,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
     content = read_pdf(path, 1)
     
     system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m. If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m).\n\nDOCUMENT: {content}"
+    prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill result assay. Use full names for materials e.g. Copper instead of Cu. The result should be provided in the following format: DRILL WIDTH UNITS; [MATERIAL: QUANTITY UNITS]; DRILL DEPTH UNITS;. End the assay with a $$ symbol. If no drill depth is provided check for EOH / aircore drilling mentions in the assay, in which case use these, otherwise use N/A. Ensure all results have a whitespace between the measurement and unit, for example 10 m instead of 10m. If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). If no significant drill result assays are found, return N/A and nothing else.\n\nDOCUMENT: {content}"
     
     while attempt <= max_attempts and results["drill_score"] == 0.0:
         logger.info(f"Beginning assay analysis.... (attempt {attempt} / {max_attempts})")
@@ -1511,15 +1641,20 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         assay = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         logger.info(assay)
         
-        results["drill_metrics"] = get_assay_metrics(assay)
         attempt += 1
-        if results["drill_metrics"] is not None:
-            logger.info("Concluded assay analysis")
-            drill_score = get_drill_score(results["drill_metrics"])
-            results["drill_score"] = drill_score["score"]
-            results["drill_materials"] = drill_score["materials"]
+        
+        if assay.replace("$$", "") != "N/A":
+            results["drill_metrics"] = get_assay_metrics(assay)
+            if results["drill_metrics"] is not None:
+                logger.info("Concluded assay analysis")
+                drill_score = get_drill_score(results["drill_metrics"])
+                results["drill_score"] = drill_score["score"]
+                results["drill_materials"] = drill_score["materials"]
+            else:
+                logger.error("Unexpected error occured when analyzing drill results, retrying....")
         else:
-            logger.error("Unexpected error occured when analyzing drill results, retrying....")
+            logger.warning("No significant drill results found, skipping....")
+            attempt = max_attempts + 1 # skip rest of extraction process to avoid pointless overhead
         
     
     if results["drill_score"] > 0.0:
@@ -1541,7 +1676,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         logger.info(f"Constructing detailed technical summary for {ticker}")
         
         system_prompt = f"You are a highly intelligent AI model trained to extract significant drill result assays from company announcements."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, return N/A.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the most significant drill assays from this report. Each assay should be formatted as WIDTH @ MATERIALS from ENDING DEPTH | HOLE_ID. Each assay should be separated by a new line. If no measurement for materials is provided, do not include in this list. Use full names for materials in these assays e.g. Copper instead of Cu and format quantities as MATERIAL QUANTITY UNITS. Be sure to include starting depth if provided in the assay, otherwise label as from surface. Use shorthand for units (e.g. m instead of metres) and add a whitespace between the measurement and units (e.g. 198 m instead of 198m or 2.3 % instead of 2.3%). If a range is provided, format as LOWER - UPPER UNITS (e.g. 10 - 20 m instead of 10m - 20m). Order assays from most significant to least significant result. If no HOLE_ID is provided for an assay, set the HOLE_ID to N/A e.g. 2 m @ Gold 0.2 g/t from 159 m | N/A. Do not provide any additional text in the response. If no valid assays can be extracted, only return N/A.\n\nDOCUMENT: {full_content}"
 
         significant_assays = await summarize_content(content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
         if significant_assays == "N/A":
