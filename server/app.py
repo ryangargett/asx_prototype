@@ -1472,7 +1472,7 @@ def format_assay_hole_list(assays: str, max_assays: int = 5) -> str:
     holes = {}
     formatted_hole_list = ""
     
-    for assay in assay_list[:max_assays + 1]:
+    for assay in assay_list[:min(len(assay_list), max_assays + 1)]: # avoid index errors for shorter sig. assays (unlikely to happen in most releases)
         assay_components = assay.strip().split("|")
         if len(assay_components) == 2:
             results = f"<li>{assay_components[0].strip()}</li>"
@@ -1688,4 +1688,3 @@ async def read_root():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
