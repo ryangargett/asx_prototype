@@ -131,8 +131,6 @@ def get_email_list() -> list[dict]:
                             "name": member["customFields"].get("first-name", ""),
                             "address": address
                             })
-                else:
-                    logger.warning("Received invalid member data from Memberstack")
                 
     except Exception as e:
         logger.error(f"Unexpected error getting email list: {e}")
@@ -1789,7 +1787,7 @@ async def lifespan(app: FastAPI):
         name="reset_announcements"
     )
     
-    # Email collection (09:00, 12:00 and 15:00 on trading days)
+    ''' Email collection (09:00, 12:00 and 15:00 on trading days)
     scheduler.add_job(
         collect_for_email,
         "cron",
@@ -1798,7 +1796,7 @@ async def lifespan(app: FastAPI):
         minute=0,
         max_instances=1,
         name="email_collection"
-    )
+    )'''
     
     # Email alert aggregation
     scheduler.add_job(
