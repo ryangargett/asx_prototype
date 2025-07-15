@@ -17,6 +17,7 @@ from hashlib import sha256
 from pytz import timezone as tz
 
 import httpx
+import pycountry
 import uvicorn
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -233,6 +234,12 @@ legal_tickers = get_legal_tickers()
 
 if legal_tickers:
     logger.info("Successfully loaded legal tickers from cache")
+    
+countries_by_name = {country.name.lower(): country for country in pycountry.countries}
+subdivisions_by_name = {subdivision.name.lower(): subdivision for subdivision in pycountry.subdivisions}
+
+if countries_by_name and subdivisions_by_name:
+    logger.info("Successfully loaded countries and subdivisions from cache")
 
 def get_colour_from_commodity(commodity: str) -> str:
     colour_map = {
@@ -320,8 +327,7 @@ def plot_results_by_commodity() -> str:
 
     return filename
 
-def get_grouped_results_by_commodity() -> dict:
-    
+def get_grouped_results_by_commodity() -> dict: 
     results = alerts.find({})
     
     grouped_results = {}
@@ -520,7 +526,6 @@ async def generate_content(file_path: str, ticker: str) -> dict:
     return content
 
 def get_stock_data(ticker: str) -> dict:
-
     entry = all_stocks.get(ticker, None)
     if entry:
         details = entry["fieldData"]
@@ -573,7 +578,6 @@ def _get_collection_size(collection_id: str) -> int:
     return 0 if num_articles is None else num_articles
 
 def push_to_collection(collection_id: str, payload: dict, silent: bool = False) -> None:
-    
     success_msg = None
     
     try:
@@ -712,9 +716,7 @@ def _get_stock_id(ticker: str) -> str:
     return stock["id"] if stock else None
         
 def push_announcement_to_site(hash: str, datetime: str, stock_id: str, formal_title: str, market_sensitive: bool, is_cash_flow: bool, is_substantial: bool) -> None:
-    
-    #TODO: Reimplement once cms collection size cap has been increased, for now just use raw ticker
-    
+       
     #ticker_collection_id = os.getenv("WEBFLOW_TICKER_COLLECTION_ID")
     #ticker_id = search_collection(ticker_collection_id, ticker)
     
@@ -723,7 +725,6 @@ def push_announcement_to_site(hash: str, datetime: str, stock_id: str, formal_ti
     else:
         item_colour = "#FFFFFF"
     
-
     fieldData = {
         "name": hash,
         "announcement-datetime": datetime,
@@ -993,6 +994,51 @@ def _is_significant(drill_score: float, market_cap: float) -> bool:
         significant = True
     
     return significant
+
+def _generate_flag_emoji(country_code: str) -> str:
+    try:
+        return "".join(chr(127397 + ord(c)) for c in country_code.upper())
+    except Exception as e:
+        logger.error(f"Error generating flag emoji: {e}")
+        return ""
+
+def _append_region_flag(region: str) -> str:
+    
+    common_aliases = {
+        "usa": "united states",
+        "us": "united states",
+        "au": "australia",
+        "uk": "united kingdom",
+        "england": "united kingdom",
+        "scotland": "united kingdom",
+        "wales": "united kingdom",
+        "uae": "united arab emirates",
+        "drc": "democratic republic of the congo",
+    }
+    
+    try:
+        for alias, full_name in common_aliases.items():
+            if alias in region.lower():
+                country = countries_by_name.get(full_name.lower())
+                if country:
+                    flag = _generate_flag_emoji(country.alpha_2)
+                    return f"{region} {flag}"
+            
+        for sub_name, subdivision in subdivisions_by_name.items():
+            if sub_name in region.lower():
+                country_code = subdivision.country_code
+                flag = _generate_flag_emoji(country_code)
+                return f"{region} {flag}"
+        
+        for country_name, country in countries_by_name.items():
+            if country_name in region.lower():
+                flag = _generate_flag_emoji(country.alpha_2)
+                return f"{region} {flag}"
+            
+    except Exception as e:
+        logger.error(f"Unexpected error appending region flag: {e}, skipping format....")
+        
+    return region
         
 async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: dict, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
@@ -1008,6 +1054,9 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
             results["drill_score"] = round(results["drill_score"], 2)
             assay = _format_assay(results["drill_metrics"])
             
+            if results["drill_results"]["project_region"] != "N/A":
+                results["drill_results"]["project_region"] = _append_region_flag(results["drill_results"]["project_region"])
+            
             try:
                 mjml_src = announcement_alert_template.render(
                     alert_meta = results,
@@ -1017,9 +1066,11 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     article_meta = article_meta,
                 )
                 
+                print(mjml_src)
+                
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
+                '''email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
@@ -1049,7 +1100,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     
                     push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
-                return html_compiled
+                return html_compiled'''
                 
             except Exception as e:
                 logger.error(f"Error occurred during email content compilation: {e}")
