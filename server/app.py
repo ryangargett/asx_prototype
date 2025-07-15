@@ -1070,7 +1070,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                '''email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
+                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
@@ -1100,7 +1100,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     
                     push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
-                return html_compiled'''
+                return html_compiled
                 
             except Exception as e:
                 logger.error(f"Error occurred during email content compilation: {e}")
