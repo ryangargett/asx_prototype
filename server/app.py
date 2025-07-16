@@ -917,7 +917,7 @@ def summarize_alerts() -> None:
         
     
     file = plot_results_by_commodity()
-    print(file)
+    
     if file:
         try:
             s3_client.upload_file(
@@ -940,7 +940,7 @@ def summarize_alerts() -> None:
             metals = screened_metals,
             num_alerts = len(alert_list),
             num_sensitive = num_sensitive,
-            bar_file_path = f"https://rtwalerts.s3.ap-southeast-2.amazonaws.com/{file}" if file else ""
+            bar_file_path = f"https://rtwalerts.s3.ap-southeast-2.amazonaws.com/{file}" if file else None
         )
         
         compiled = mjml_to_html(mjml_src)
@@ -1065,8 +1065,6 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     report_type = report_type,
                     article_meta = article_meta,
                 )
-                
-                print(mjml_src)
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
@@ -1871,4 +1869,5 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    #uvicorn.run(app, host="0.0.0.0", port=8000)
+    summarize_alerts()
