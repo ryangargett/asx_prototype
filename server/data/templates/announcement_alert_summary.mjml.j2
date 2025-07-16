@@ -8,8 +8,8 @@
       <mj-class name="alert-card" background-color="#ffffff" padding="20px" margin="10px 0" border-radius="8px" box-shadow="0 2px 8px rgba(0,0,0,0.1)" />
       <mj-class name="alert-subheading" align="center" font-size="18px" font-weight="bold" line-height="20px" padding="15px 0" color="#bf9b30"/>
       
-      <mj-class name="table-header" font-size="12px" font-weight="bold" padding="12px 15px" background-color="#f8f8f8" color="#2C2C2C" />
-      <mj-class name="table-cell" font-size="13px" padding="12px 15px" line-height="18px" border-bottom="1px solid #eeeeee" />
+      <mj-class name="table-header" font-size="12px" font-weight="bold" padding="20px" background-color="#f8f8f8" color="#2C2C2C" />
+      <mj-class name="table-cell" font-size="13px" padding="20px" line-height="18px" border-bottom="1px solid #eeeeee" />
       <mj-class name="table-row" background-color="#ffffff" />
       <mj-class name="table-row-alt" background-color="#fafafa" />
     </mj-attributes>
@@ -33,53 +33,55 @@
         </mj-column>
       </mj-section>
 
-      <!-- Alerts Table -->
-      <mj-section mj-class="alert-card">
-        <mj-column width="100%">
-          <mj-table cellpadding="0" width="100%">
-            <tr style="border-bottom: 2px solid #eeeeee;">
-              <th mj-class="table-header" style="text-align:left; width:15%;">
-                Ticker
-              </th>
-              <th mj-class="table-header" style="text-align:left; width:15%;">
-                Cap
-              </th>
-              <th mj-class="table-header" style="text-align:left; width:20%;">
-                Result
-              </th>
-              <th mj-class="table-header" style="text-align:left; width:25%;">
-                Article
-              </th>
-              <th mj-class="table-header" style="text-align:left; width:25%;">
-                Document
-              </th>
-            </tr>
-            {% for alert in alerts %}
-              <tr mj-class="{% if loop.index % 2 == 0 %}table-row-alt{% else %}table-row{% endif %}">
-                <td mj-class="table-cell">
-                  <span style="font-weight: bold; color: #bf9b30;">{{ alert.ticker }}</span>
-                </td>
-                <td mj-class="table-cell">
-                  {{ alert.market_cap }}
-                </td>
-                <td mj-class="table-cell">
-                  <span style="font-weight: bold;">{{ alert.assay }}</span>
-                </td>
-                <td mj-class="table-cell">
-                  <a href="{{ alert.article_url }}" style="color: #0066cc; text-decoration: none;">
-                    {{ alert.article_title|truncate(40) }}
-                  </a>
-                </td>
-                <td mj-class="table-cell">
-                  <a href="{{ alert.document_url }}" style="color: #0066cc; text-decoration: none;">
-                    {{ alert.document_title|truncate(40) }}
-                  </a>
-                </td>
+      {%if alerts|length > 0%}
+        <!-- Alerts Table -->
+        <mj-section mj-class="alert-card">
+          <mj-column width="100%">
+            <mj-table cellpadding="2px" width="100%">
+              <tr style="border-bottom: 2px solid #eeeeee;">
+                <th mj-class="table-header" style="text-align:left; width:15%;">
+                  Ticker
+                </th>
+                <th mj-class="table-header" style="text-align:left; width:15%;">
+                  Cap
+                </th>
+                <th mj-class="table-header" style="text-align:left; width:20%;">
+                  Result
+                </th>
+                <th mj-class="table-header" style="text-align:left; width:25%;">
+                  Article
+                </th>
+                <th mj-class="table-header" style="text-align:left; width:25%;">
+                  Document
+                </th>
               </tr>
-            {% endfor %}
-          </mj-table>
-        </mj-column>
-      </mj-section>
+              {% for alert in alerts %}
+                <tr mj-class="{% if loop.index % 2 == 0 %}table-row-alt{% else %}table-row{% endif %}">
+                  <td mj-class="table-cell">
+                    <span style="font-weight: bold; color: #bf9b30;">{{ alert.ticker }}</span>
+                  </td>
+                  <td mj-class="table-cell">
+                    {{ alert.market_cap }}
+                  </td>
+                  <td mj-class="table-cell">
+                    <span style="font-weight: bold;">{{ alert.assay }}</span>
+                  </td>
+                  <td mj-class="table-cell">
+                    <a href="{{ alert.article_url }}" style="color: #0066cc; text-decoration: none;">
+                      {{ alert.article_title|truncate(40) }}
+                    </a>
+                  </td>
+                  <td mj-class="table-cell">
+                    <a href="{{ alert.document_url }}" style="color: #0066cc; text-decoration: none;">
+                      {{ alert.document_title|truncate(40) }}
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </mj-table>
+          </mj-column>
+        </mj-section>
+      {%endif%}
 
       <!-- Spacer -->
       <mj-section>
@@ -88,16 +90,18 @@
         </mj-column>
       </mj-section>
 
-      <mj-section>
-        <mj-column>
-          <mj-image href="{{ bar_file_path }}" src="{{ bar_file_path }}" alt="Market Data Chart" width="600px" padding="0" />
-        </mj-column>
-      </mj-section>
+      {%if bar_file_path is not none%}
+        <mj-section>
+          <mj-column>
+            <mj-image href="{{ bar_file_path }}" src="{{ bar_file_path }}" alt="Market Data Chart" width="600px" padding="0" />
+          </mj-column>
+        </mj-section>
+      {%endif%}
 
       <!-- Metals Table -->
       <mj-section mj-class="alert-card">
         <mj-column width="100%">
-          <mj-table cellpadding="0" width="100%">
+          <mj-table cellpadding="2px" width="100%">
             <tr style="border-bottom: 2px solid #eeeeee;">
               <th mj-class="table-header" style="text-align:left; width:25%;">
                 Metal
