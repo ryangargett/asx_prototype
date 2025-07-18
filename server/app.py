@@ -50,7 +50,7 @@ announcement_semaphore = Semaphore(10)
 asx_download_semaphore = Semaphore(2)
 
 from summarizer import read_pdf, summarize_content
-from metals import update_metal_prices
+from metals import update_metal_prices, standardize_metal_prices
 from logging_init import logger
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
@@ -593,7 +593,7 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
         )
         
         response.raise_for_status()
-        
+
         response_formatted = response.json()
         message = response_formatted.get("message", None)
         if message:
@@ -608,7 +608,26 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
         
     return success_msg
 
-
+def update_collection_item(collection_id: str, item_id: str, payload: dict):
+    try:
+        response = requests.patch(
+        f"https://api.webflow.com/v2/collections/{collection_id}/items/{item_id}/live",
+        headers = {
+            "Authorization": "Bearer " + access_token,
+            "Content-Type": "application/json"
+        },
+        json = {
+            "fieldData": payload
+        }
+        )
+        
+        response.raise_for_status()
+        
+    except Exception as e:
+        tqdm.write(f"Error: {e}")    
+        
+    response = response.json()
+    
 def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
     offset = 0
     page_limit = 100
@@ -640,6 +659,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
             offset += page_limit
             
     item_id = None
+
     if len(all_items) > 0:
         for item in all_items:
             if item["fieldData"][field] == search_query:
@@ -865,26 +885,7 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
     if len(slug) > max_length:
         slug = slug[:max_length].rsplit("-", 1)[0]
         
-    return slug
-
-def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
-    '''Converts metal prices to oz or lb depending on the metal type, based on popular tabular data formats'''
-    if metal in ["Gold", "Palladium", "Platinum", "Silver"]:
-        if unit == "toz":
-            return price / 1.09714, "oz"
-        else:
-            return price, "oz"
-    elif metal in ["Iron"]:
-        if unit == "oz":
-            return price * 35273.96, "mt"
-        return price * 31.1034768
-    else: # base case: convert to / lb
-        if unit == "toz":
-            return price * 14.5833, "lb"
-        elif unit == "oz":
-            return price * 16, "lb"
-        else:
-            return price, "lb"
+    return slug     
 
 def summarize_alerts() -> None:
     global num_sensitive
@@ -907,15 +908,7 @@ def summarize_alerts() -> None:
         "Zinc"
     ]
     
-    screened_metals = []
-
-    for metal in metal_list:
-        if metal["name"] in legal_metals:
-            metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
-            metal["price"] = round(metal["price"], 2)
-            screened_metals.append(metal)
-        
-    
+    screened_metals = standardize_metal_prices(metal_list, legal_metals)
     file = plot_results_by_commodity()
     
     if file:
@@ -1075,11 +1068,9 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     article_meta = article_meta,
                 )
                 
-                print(mjml_src)
-                
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                '''email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
+                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
@@ -1109,7 +1100,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     
                     push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
-                return html_compiled'''
+                return html_compiled
                 
             except Exception as e:
                 logger.error(f"Error occurred during email content compilation: {e}")
@@ -1832,6 +1823,45 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
     return results
 
+def update_metals():
+    #update_metal_prices()
+    
+    legal_metals = [
+        "Aluminium",
+        "Copper",
+        "Gold",
+        "Iron",
+        "Lithium"
+        "Magnesium",
+        "Molybdenum",
+        "Nickel",
+        "Palladium",
+        "Platinum",
+        "Silver",
+        "Uranium",
+        "Zinc"
+    ]
+    
+    filtered_metals = standardize_metal_prices(metals.find({}), legal_metals)
+    
+    for metal in filtered_metals:
+        discovered = search_collection(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), metal["name"], "name")
+        
+        payload = {
+                "name": metal["name"],
+                "price": metal["price"],
+                "unit": metal["unit"],
+                "raw-change": metal["raw_change"],
+                "percent-change": metal["pct_change"],
+                "text-colour": metal["color"]
+            }
+        
+        if not discovered:
+            push_to_collection(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), payload)
+        else:
+            update_collection_item(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), discovered, payload)
+            
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
@@ -1845,8 +1875,7 @@ async def lifespan(app: FastAPI):
         update_metal_prices,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="6,14",
-        minute=30,
+        hour="2,4,8,10,12,14,16,18,20,22",
         max_instances=1,
         name="update_metal_prices"
     )
@@ -1906,5 +1935,4 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host="0.0.0.0", port=8000)
-    print(get_assay_metrics("41-43 m; [Copper: 2.3-5%, Gold: 0.5g/t]; 169 m; $$"))
+    uvicorn.run(app, host="0.0.0.0", port=8000)

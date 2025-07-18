@@ -127,10 +127,10 @@
                 <td mj-class="table-cell">
                   ${{ metal.price }} / <b>{{ metal.unit}}</b>
                 </td>
-                <td mj-class="table-cell" style="{% if metal.raw_change < 0 %}color: #e74c3c;{% elif metal.raw_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
+                <td mj-class="table-cell" style="color: {{ metal.color }}; font-weight: bold;">
                   {{ metal.raw_change }}
                 </td>
-                <td mj-class="table-cell" style="{% if metal.pct_change < 0 %}color: #e74c3c;{% elif metal.pct_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
+                <td mj-class="table-cell" style="color: {{ metal.color }}; font-weight: bold;">
                   {{ metal.pct_change }}%
                 </td>
               </tr>

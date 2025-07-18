@@ -25,6 +25,37 @@ metals.insert_many(metal_list)
 '''
 metal_key = os.getenv("METAL_KEY")
 
+def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
+    '''Converts metal prices to oz or lb depending on the metal type, based on popular tabular data formats'''
+    if metal in ["Gold", "Palladium", "Platinum", "Silver"]:
+        if unit == "toz":
+            return price / 1.09714, "oz"
+        else:
+            return price, "oz"
+    elif metal in ["Iron"]:
+        if unit == "oz":
+            return price * 35273.96, "mt"
+        return price * 31.1034768
+    else: # base case: convert to / lb
+        if unit == "toz":
+            return price * 14.5833, "lb"
+        elif unit == "oz":
+            return price * 16, "lb"
+        else:
+            return price, "lb"
+
+def standardize_metal_prices(metals: dict, legal_metals: list) -> dict:
+    
+    standardized_metals = []
+    
+    for metal in metals:
+        if metal["name"] in legal_metals:
+            metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
+            metal["price"] = round(metal["price"], 2)
+            standardized_metals.append(metal)      
+            
+    return standardized_metals 
+
 def _get_prices(symbols: list) -> dict:
     params = {
         "access_key": metal_key,
@@ -42,6 +73,14 @@ def _get_prices(symbols: list) -> dict:
         logger.error(f"Unexpected error fetching metal prices: {e}")
         return {}
     return data["rates"]   
+
+def _get_color(pct_change: float) -> str:
+    if pct_change > 0:
+        return "#2ecc71"
+    elif pct_change < 0:
+        return "#e74c3c"
+    else:
+        return "#AAAAAA"
 
 def update_metal_prices() -> None:
     
@@ -80,7 +119,8 @@ def update_metal_prices() -> None:
                             "adjusted_price": new_adjusted_price,
                             "last_price": last_price,
                             "raw_change": raw_change,
-                            "pct_change": pct_change
+                            "pct_change": pct_change,
+                            "color": _get_color(pct_change)
                         }}
                     )
                     num_successful += 1
