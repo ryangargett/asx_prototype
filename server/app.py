@@ -1558,47 +1558,69 @@ def get_assay_metrics(result: str) -> dict:
     result_components = result.split("$$")
     assay = result_components[0].strip() # ensure that only the assay is used in case of additional generation / hallucination
     
-    assay_components = assay.split(";")
-    if assay_components[-1] == "":
-        assay_components = assay_components[:-1]
-    if len(assay_components) == 3:
-        drill_width = assay_components[0]
-        
-        drill_width_components = drill_width.split(" ")
-        if len(drill_width_components) > 1:    
-            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[:-1], drill_width_components[-1].strip())
-        else:
-            logger.warning("Received assay with missing unit, defaulting to metric")
-            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[0].strip(), "m")
-            if metrics["drill_width_standardized"] == None:
-                return None
-        
-        metrics["raw_materials"] = assay_components[1].strip().replace("[", "").replace("]", "")   
-        materials = metrics["raw_materials"].split(",")
-        metrics["standardized_materials"] = {}
-        for material in materials:
-            material_components = material.strip().split(" ")
-            material_name = material_components[0].replace(":", "").strip()
-            if len(material_name.split(" ")) == 1:
-                material_name = material_components[0].replace(":", "").strip()
-                print(material_name)
-                print(material_components)
-                metrics["standardized_materials"][material_name] = _standardize_measurement(material_components[1:-1], material_components[-1].strip())
-                if metrics["standardized_materials"][material_name] == None:
-                    return None
+    assay_components = [comp.strip() for comp in assay.split(";") if comp.strip()]
+    if len(assay_components) != 3:
+        logger.warning("Unexpected number of components in assay string.")
+        return None
+    
+    drill_width_match = re.search(r"([\d\.]+)\s*-\s*([\d\.]+)\s*([a-zA-Z/]+)", assay_components[0])
+    if drill_width_match:
+        low, high, unit = drill_width_match.groups()
+        drill_width_standardized = _standardize_measurement([low, "-", high], unit)
+    else:
+        drill_width_match = re.search(r"([\d\.]+)\s*([a-zA-Z/]+)", assay_components[0])
+        if drill_width_match:
+            value, unit = drill_width_match.groups()
+            drill_width_standardized = _standardize_measurement([value], unit)
+    
+    if drill_width_standardized:
+        metrics["drill_width_standardized"] = drill_width_standardized
+    else:
+        logger.warning(f"Failed to standardize drill width component '{assay_components[0]}'")
+        return None
+    
+    raw_materials = assay_components[1].replace("[", "").replace("]", "").strip()
+    metrics["raw_materials"] = raw_materials
+    metrics["standardized_materials"] = {}
+    materials = [m.strip() for m in raw_materials.split(",") if m.strip()]
+    
+    for material in materials:
+        try:
+            name, value_unit = material.split(":")
+            name = name.strip()
+            value_unit = re.sub(r"(?<=\d)\s*-\s*(?=\d)", " - ", value_unit)
+            value_unit = re.sub(r"(?<=\d)(?=[a-zA-Z%/])", " ", value_unit.strip())
+            parts = value_unit.strip().split()
+            standardized_measurement = _standardize_measurement(parts[:-1], parts[-1])
+            if standardized_measurement:
+                metrics["standardized_materials"][name] = standardized_measurement
             else:
+                logger.warning(f"Failed to standardize material component '{material}'")
                 return None
-                
-        drill_depth = assay_components[2].strip()
-        drill_depth_components = drill_depth.split(" ")
-        metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[:-1], drill_depth_components[-1].strip())
-        if metrics["drill_depth_standardized"] == None:
-            if drill_depth.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
-                metrics["drill_depth_standardized"] = drill_depth.lower()
-            else:
-                logger.warning("Received assay with no valid drill depth descriptor, defaulting to surface")
-                drill_depth = 0.0
-                
+            
+        except ValueError as e:
+            logger.error(f"Error parsing material component '{material}': {e}")
+            return None
+            
+    drill_depth_raw = assay_components[2]
+    drill_depth_match = re.search(r"([\d\.]+)\s*-\s*([\d\.]+)\s*([a-zA-Z/]+)", drill_depth_raw)
+    if drill_depth_match:
+        low, high, unit = drill_depth_match.groups()
+        drill_depth_standardized = _standardize_measurement([value], unit)
+    else:
+        drill_depth_match = re.search(r"([\d\.]+)\s*([a-zA-Z/]+)", drill_depth_raw)  
+        if drill_depth_match:
+            value, unit = drill_depth_match.groups()
+            drill_depth_standardized = _standardize_measurement([value], unit)
+            
+    if drill_depth_standardized:
+        metrics["drill_depth_standardized"] = drill_depth_standardized
+    elif drill_depth_raw.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
+        metrics["drill_depth_standardized"] = drill_depth_raw.lower()  
+    else:
+        logger.warning("No valid drill depth unit, defaulting to 0.0")
+        metrics["drill_depth_standardized"] = 0.0
+
     return metrics
 
 def _format_market_cap(market_cap: int):
@@ -1885,4 +1907,4 @@ async def read_root():
 
 if __name__ == "__main__":
     #uvicorn.run(app, host="0.0.0.0", port=8000)
-    summarize_alerts()
+    print(get_assay_metrics("41-43 m; [Copper: 2.3-5%, Gold: 0.5g/t]; 169 m; $$"))
