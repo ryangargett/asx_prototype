@@ -1824,7 +1824,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
     return results
 
 def update_metals():
-    #update_metal_prices()
+    update_metal_prices()
     
     legal_metals = [
         "Aluminium",
@@ -1872,7 +1872,7 @@ async def lifespan(app: FastAPI):
     )
     
     scheduler.add_job(
-        update_metal_prices,
+        update_metals,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
         hour="2,4,8,10,12,14,16,18,20,22",
