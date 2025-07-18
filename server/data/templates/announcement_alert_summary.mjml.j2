@@ -94,6 +94,9 @@
         <mj-section>
           <mj-column>
             <mj-image href="{{ bar_file_path }}" src="{{ bar_file_path }}" alt="Market Data Chart" width="600px" padding="0" />
+            <mj-text color="#808080" font-size="12px" font-style="italic">
+              *All units are in AuEq grams / drill width (m)
+            </mj-text>
           </mj-column>
         </mj-section>
       {%endif%}
@@ -124,10 +127,10 @@
                 <td mj-class="table-cell">
                   ${{ metal.price }} / <b>{{ metal.unit}}</b>
                 </td>
-                <td mj-class="table-cell" style="{% if metal.raw_change < 0 %}color: #e74c3c;{% elif metal.raw_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
+                <td mj-class="table-cell" style="color: {{ metal.color }}; font-weight: bold;">
                   {{ metal.raw_change }}
                 </td>
-                <td mj-class="table-cell" style="{% if metal.pct_change < 0 %}color: #e74c3c;{% elif metal.pct_change > 0 %}color: #2ecc71;{% else %}color: #AAAAAA;{% endif %} font-weight: bold;">
+                <td mj-class="table-cell" style="color: {{ metal.color }}; font-weight: bold;">
                   {{ metal.pct_change }}%
                 </td>
               </tr>
