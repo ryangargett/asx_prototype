@@ -50,7 +50,7 @@ announcement_semaphore = Semaphore(10)
 asx_download_semaphore = Semaphore(2)
 
 from summarizer import read_pdf, summarize_content
-from metals import update_metal_prices
+from metals import update_metal_prices, standardize_metal_prices
 from logging_init import logger
 
 mongo_client = MongoClient(os.getenv("MONGODB_KEY"))
@@ -593,7 +593,7 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
         )
         
         response.raise_for_status()
-        
+
         response_formatted = response.json()
         message = response_formatted.get("message", None)
         if message:
@@ -608,7 +608,26 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
         
     return success_msg
 
-
+def update_collection_item(collection_id: str, item_id: str, payload: dict):
+    try:
+        response = requests.patch(
+        f"https://api.webflow.com/v2/collections/{collection_id}/items/{item_id}/live",
+        headers = {
+            "Authorization": "Bearer " + access_token,
+            "Content-Type": "application/json"
+        },
+        json = {
+            "fieldData": payload
+        }
+        )
+        
+        response.raise_for_status()
+        
+    except Exception as e:
+        tqdm.write(f"Error: {e}")    
+        
+    response = response.json()
+    
 def search_collection(collection_id: str, search_query: str, field: str = "name", suppress_warning: bool = False) -> str:
     offset = 0
     page_limit = 100
@@ -640,6 +659,7 @@ def search_collection(collection_id: str, search_query: str, field: str = "name"
             offset += page_limit
             
     item_id = None
+
     if len(all_items) > 0:
         for item in all_items:
             if item["fieldData"][field] == search_query:
@@ -865,26 +885,7 @@ def _generate_slug(title: str, max_length: int = 80) -> str:
     if len(slug) > max_length:
         slug = slug[:max_length].rsplit("-", 1)[0]
         
-    return slug
-
-def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
-    '''Converts metal prices to oz or lb depending on the metal type, based on popular tabular data formats'''
-    if metal in ["Gold", "Palladium", "Platinum", "Silver"]:
-        if unit == "toz":
-            return price / 1.09714, "oz"
-        else:
-            return price, "oz"
-    elif metal in ["Iron"]:
-        if unit == "oz":
-            return price * 35273.96, "mt"
-        return price * 31.1034768
-    else: # base case: convert to / lb
-        if unit == "toz":
-            return price * 14.5833, "lb"
-        elif unit == "oz":
-            return price * 16, "lb"
-        else:
-            return price, "lb"
+    return slug     
 
 def summarize_alerts() -> None:
     global num_sensitive
@@ -907,15 +908,7 @@ def summarize_alerts() -> None:
         "Zinc"
     ]
     
-    screened_metals = []
-
-    for metal in metal_list:
-        if metal["name"] in legal_metals:
-            metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
-            metal["price"] = round(metal["price"], 2)
-            screened_metals.append(metal)
-        
-    
+    screened_metals = standardize_metal_prices(metal_list, legal_metals)
     file = plot_results_by_commodity()
     
     if file:
@@ -1003,6 +996,8 @@ def _generate_flag_emoji(country_code: str) -> str:
         return ""
 
 def _append_region_flag(region: str) -> str:
+    region_original = region
+    region = region.lower()
     
     common_aliases = {
         "usa": "united states",
@@ -1014,31 +1009,38 @@ def _append_region_flag(region: str) -> str:
         "wales": "united kingdom",
         "uae": "united arab emirates",
         "drc": "democratic republic of the congo",
+        "wa": "australia",
+        "qld": "australia",
+        "nsw": "australia",
+        "vic": "australia",
+        "nt": "australia",
+        "tas": "australia",
+        "act": "australia"
     }
     
     try:
-        for alias, full_name in common_aliases.items():
-            if alias in region.lower():
-                country = countries_by_name.get(full_name.lower())
-                if country:
-                    flag = _generate_flag_emoji(country.alpha_2)
-                    return f"{region} {flag}"
-            
-        for sub_name, subdivision in subdivisions_by_name.items():
-            if sub_name in region.lower():
-                country_code = subdivision.country_code
-                flag = _generate_flag_emoji(country_code)
-                return f"{region} {flag}"
+        
+        region_components = region.split(" ")
+        
+        for component in region_components:
+            if common_aliases.get(component, "") != "":
+                region = region.replace(component, common_aliases[component])
         
         for country_name, country in countries_by_name.items():
-            if country_name in region.lower():
+            if country_name in region:
                 flag = _generate_flag_emoji(country.alpha_2)
-                return f"{region} {flag}"
+                return f"{region_original} {flag}"
             
+        for sub_name, subdivision in subdivisions_by_name.items():
+            if sub_name in region:
+                country_code = subdivision.country_code
+                flag = _generate_flag_emoji(country_code)
+                return f"{region_original} {flag}"
+    
     except Exception as e:
         logger.error(f"Unexpected error appending region flag: {e}, skipping format....")
         
-    return region
+    return region_original
         
 async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: dict, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
@@ -1535,6 +1537,8 @@ def plot_drill_modifier_heatmap():
     
 def get_assay_metrics(result: str) -> dict:
     
+    logger.info(result)
+    
     metrics = {
         "drill_width_standardized": None,
         "raw_materials": None,
@@ -1545,45 +1549,69 @@ def get_assay_metrics(result: str) -> dict:
     result_components = result.split("$$")
     assay = result_components[0].strip() # ensure that only the assay is used in case of additional generation / hallucination
     
-    assay_components = assay.split(";")
-    if assay_components[-1] == "":
-        assay_components = assay_components[:-1]
-    if len(assay_components) == 3:
-        drill_width = assay_components[0]
-        
-        drill_width_components = drill_width.split(" ")
-        if len(drill_width_components) > 1:    
-            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[:-1], drill_width_components[-1].strip())
-        else:
-            logger.warning("Received assay with missing unit, defaulting to metric")
-            metrics["drill_width_standardized"] = _standardize_measurement(drill_width_components[0].strip(), "m")
-            if metrics["drill_width_standardized"] == None:
-                return None
-        
-        metrics["raw_materials"] = assay_components[1].strip().replace("[", "").replace("]", "")   
-        materials = metrics["raw_materials"].split(",")
-        metrics["standardized_materials"] = {}
-        for material in materials:
-            material_components = material.strip().split(" ")
-            material_name = material_components[0].replace(":", "").strip()
-            if len(material_name.split(" ")) == 1:
-                material_name = material_components[0].replace(":", "").strip()
-                metrics["standardized_materials"][material_name] = _standardize_measurement(material_components[1:-1], material_components[-1].strip())
-                if metrics["standardized_materials"][material_name] == None:
-                    return None
+    assay_components = [comp.strip() for comp in assay.split(";") if comp.strip()]
+    if len(assay_components) != 3:
+        logger.warning("Unexpected number of components in assay string.")
+        return None
+    
+    drill_width_match = re.search(r"([\d\.]+)\s*-\s*([\d\.]+)\s*([a-zA-Z/]+)", assay_components[0])
+    if drill_width_match:
+        low, high, unit = drill_width_match.groups()
+        drill_width_standardized = _standardize_measurement([low, "-", high], unit)
+    else:
+        drill_width_match = re.search(r"([\d\.]+)\s*([a-zA-Z/]+)", assay_components[0])
+        if drill_width_match:
+            value, unit = drill_width_match.groups()
+            drill_width_standardized = _standardize_measurement([value], unit)
+    
+    if drill_width_standardized:
+        metrics["drill_width_standardized"] = drill_width_standardized
+    else:
+        logger.warning(f"Failed to standardize drill width component '{assay_components[0]}'")
+        return None
+    
+    raw_materials = assay_components[1].replace("[", "").replace("]", "").strip()
+    metrics["raw_materials"] = raw_materials
+    metrics["standardized_materials"] = {}
+    materials = [m.strip() for m in raw_materials.split(",") if m.strip()]
+    
+    for material in materials:
+        try:
+            name, value_unit = material.split(":")
+            name = name.strip()
+            value_unit = re.sub(r"(?<=\d)\s*-\s*(?=\d)", " - ", value_unit)
+            value_unit = re.sub(r"(?<=\d)(?=[a-zA-Z%/])", " ", value_unit.strip())
+            parts = value_unit.strip().split()
+            standardized_measurement = _standardize_measurement(parts[:-1], parts[-1])
+            if standardized_measurement:
+                metrics["standardized_materials"][name] = standardized_measurement
             else:
+                logger.warning(f"Failed to standardize material component '{material}'")
                 return None
-                
-        drill_depth = assay_components[2].strip()
-        drill_depth_components = drill_depth.split(" ")
-        metrics["drill_depth_standardized"] = _standardize_measurement(drill_depth_components[:-1], drill_depth_components[-1].strip())
-        if metrics["drill_depth_standardized"] == None:
-            if drill_depth.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
-                metrics["drill_depth_standardized"] = drill_depth.lower()
-            else:
-                logger.warning("Received assay with no valid drill depth descriptor, defaulting to surface")
-                drill_depth = 0.0
-                
+            
+        except ValueError as e:
+            logger.error(f"Error parsing material component '{material}': {e}")
+            return None
+            
+    drill_depth_raw = assay_components[2]
+    drill_depth_match = re.search(r"([\d\.]+)\s*-\s*([\d\.]+)\s*([a-zA-Z/]+)", drill_depth_raw)
+    if drill_depth_match:
+        low, high, unit = drill_depth_match.groups()
+        drill_depth_standardized = _standardize_measurement([value], unit)
+    else:
+        drill_depth_match = re.search(r"([\d\.]+)\s*([a-zA-Z/]+)", drill_depth_raw)  
+        if drill_depth_match:
+            value, unit = drill_depth_match.groups()
+            drill_depth_standardized = _standardize_measurement([value], unit)
+            
+    if drill_depth_standardized:
+        metrics["drill_depth_standardized"] = drill_depth_standardized
+    elif drill_depth_raw.lower() in ["eoh", "aircore", "surface", "surface drilling only"]:
+        metrics["drill_depth_standardized"] = drill_depth_raw.lower()  
+    else:
+        logger.warning("No valid drill depth unit, defaulting to 0.0")
+        metrics["drill_depth_standardized"] = 0.0
+
     return metrics
 
 def _format_market_cap(market_cap: int):
@@ -1762,7 +1790,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         results["drill_results"]["title"] = title
         
         system_prompt = f"You are a highly intelligent AI model trained to extract project details from drilling reports."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the full project name, prospect name and the region the project is being conducted in. The response should be formatted as the following: PROJECT NAME; PROSPECT NAME; REGION. If any of these cannot be provided, replace the relevant field with 'N/A'.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the full project name, prospect name and the region the project is being conducted in. The response should be formatted as the following: PROJECT NAME; PROSPECT NAME; REGION. Any regional contractions should be reported as the fully expanded region name e.g. Western Australia instead of WA. If any of these cannot be provided, replace the relevant field with 'N/A'.\n\nDOCUMENT: {full_content}"
         
         
         project_details = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
@@ -1795,6 +1823,45 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         
     return results
 
+def update_metals():
+    update_metal_prices()
+    
+    legal_metals = [
+        "Aluminium",
+        "Copper",
+        "Gold",
+        "Iron",
+        "Lithium"
+        "Magnesium",
+        "Molybdenum",
+        "Nickel",
+        "Palladium",
+        "Platinum",
+        "Silver",
+        "Uranium",
+        "Zinc"
+    ]
+    
+    filtered_metals = standardize_metal_prices(metals.find({}), legal_metals)
+    
+    for metal in filtered_metals:
+        discovered = search_collection(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), metal["name"], "name")
+        
+        payload = {
+                "name": metal["name"],
+                "price": metal["price"],
+                "unit": metal["unit"],
+                "raw-change": metal["raw_change"],
+                "percent-change": metal["pct_change"],
+                "text-colour": metal["color"]
+            }
+        
+        if not discovered:
+            push_to_collection(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), payload)
+        else:
+            update_collection_item(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), discovered, payload)
+            
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
@@ -1805,11 +1872,10 @@ async def lifespan(app: FastAPI):
     )
     
     scheduler.add_job(
-        update_metal_prices,
+        update_metals,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="6,14",
-        minute=30,
+        hour="2,4,8,10,12,14,16,18,20,22",
         max_instances=1,
         name="update_metal_prices"
     )
@@ -1869,5 +1935,4 @@ async def read_root():
     return {"message": "Welcome to the FastAPI application"}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host="0.0.0.0", port=8000)
-    summarize_alerts()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
