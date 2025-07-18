@@ -1003,6 +1003,8 @@ def _generate_flag_emoji(country_code: str) -> str:
         return ""
 
 def _append_region_flag(region: str) -> str:
+    region_original = region
+    region = region.lower()
     
     common_aliases = {
         "usa": "united states",
@@ -1014,31 +1016,38 @@ def _append_region_flag(region: str) -> str:
         "wales": "united kingdom",
         "uae": "united arab emirates",
         "drc": "democratic republic of the congo",
+        "wa": "australia",
+        "qld": "australia",
+        "nsw": "australia",
+        "vic": "australia",
+        "nt": "australia",
+        "tas": "australia",
+        "act": "australia"
     }
     
     try:
-        for alias, full_name in common_aliases.items():
-            if alias in region.lower():
-                country = countries_by_name.get(full_name.lower())
-                if country:
-                    flag = _generate_flag_emoji(country.alpha_2)
-                    return f"{region} {flag}"
-            
-        for sub_name, subdivision in subdivisions_by_name.items():
-            if sub_name in region.lower():
-                country_code = subdivision.country_code
-                flag = _generate_flag_emoji(country_code)
-                return f"{region} {flag}"
+        
+        region_components = region.split(" ")
+        
+        for component in region_components:
+            if common_aliases.get(component, "") != "":
+                region = region.replace(component, common_aliases[component])
         
         for country_name, country in countries_by_name.items():
-            if country_name in region.lower():
+            if country_name in region:
                 flag = _generate_flag_emoji(country.alpha_2)
-                return f"{region} {flag}"
+                return f"{region_original} {flag}"
             
+        for sub_name, subdivision in subdivisions_by_name.items():
+            if sub_name in region:
+                country_code = subdivision.country_code
+                flag = _generate_flag_emoji(country_code)
+                return f"{region_original} {flag}"
+    
     except Exception as e:
         logger.error(f"Unexpected error appending region flag: {e}, skipping format....")
         
-    return region
+    return region_original
         
 async def format_alert(file_path: str, ticker: str, report_type: str, article_meta: dict, market_cap: float) -> str:
     results = await get_drill_result(file_path, ticker)
@@ -1066,9 +1075,11 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     article_meta = article_meta,
                 )
                 
+                print(mjml_src)
+                
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
+                '''email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
@@ -1098,7 +1109,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     
                     push_to_collection(os.getenv("WEBFLOW_DRILL_RESULTS_COLLECTION_ID"), fieldData, silent = True)
                 
-                return html_compiled
+                return html_compiled'''
                 
             except Exception as e:
                 logger.error(f"Error occurred during email content compilation: {e}")
@@ -1535,6 +1546,8 @@ def plot_drill_modifier_heatmap():
     
 def get_assay_metrics(result: str) -> dict:
     
+    logger.info(result)
+    
     metrics = {
         "drill_width_standardized": None,
         "raw_materials": None,
@@ -1568,6 +1581,8 @@ def get_assay_metrics(result: str) -> dict:
             material_name = material_components[0].replace(":", "").strip()
             if len(material_name.split(" ")) == 1:
                 material_name = material_components[0].replace(":", "").strip()
+                print(material_name)
+                print(material_components)
                 metrics["standardized_materials"][material_name] = _standardize_measurement(material_components[1:-1], material_components[-1].strip())
                 if metrics["standardized_materials"][material_name] == None:
                     return None
@@ -1762,7 +1777,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
         results["drill_results"]["title"] = title
         
         system_prompt = f"You are a highly intelligent AI model trained to extract project details from drilling reports."
-        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the full project name, prospect name and the region the project is being conducted in. The response should be formatted as the following: PROJECT NAME; PROSPECT NAME; REGION. If any of these cannot be provided, replace the relevant field with 'N/A'.\n\nDOCUMENT: {full_content}"
+        prompt = f"The following is a report from company with ASX ticker: {ticker} published recently. Please extract the full project name, prospect name and the region the project is being conducted in. The response should be formatted as the following: PROJECT NAME; PROSPECT NAME; REGION. Any regional contractions should be reported as the fully expanded region name e.g. Western Australia instead of WA. If any of these cannot be provided, replace the relevant field with 'N/A'.\n\nDOCUMENT: {full_content}"
         
         
         project_details = await summarize_content(full_content, logger, ticker, system_prompt = system_prompt, prompt = prompt)
