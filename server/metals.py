@@ -46,10 +46,13 @@ def _convert_to_units(metal: str, price: float, unit: str) -> tuple[float, str]:
 
 def standardize_metal_prices(metals: dict, legal_metals: list) -> dict:
     
+    metal_lookup = {metal["name"]: metal for metal in metals}
+    
     standardized_metals = []
     
-    for metal in metals:
-        if metal["name"] in legal_metals:
+    for metal_name in legal_metals:
+        metal = metal_lookup.get(metal_name)
+        if metal:
             metal["price"], metal["unit"] = _convert_to_units(metal["name"], metal["price"], metal["unit"])
             metal["price"] = round(metal["price"], 2)
             standardized_metals.append(metal)      
