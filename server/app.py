@@ -75,6 +75,20 @@ metals = db["metals"]
 db['metals'].aggregate([{"$out": "metals_backup"}])
 alerts = db["alerts"]
 
+legal_metals = [
+    "Gold",
+    "Silver",
+    "Iron",
+    "Copper",
+    "Uranium"
+    "Aluminium",
+    "Nickel",
+    "Palladium",
+    "Platinum",
+    "Molybdenum",
+    "Zinc"
+]
+
 # check if s3 connection can be established
 try:
     s3_client = b3.client("s3",
@@ -267,57 +281,70 @@ def _gen_filename() -> str:
     now = datetime.now(tz("Australia/Sydney"))
     return now.strftime("%Y%m%d_%H%M%S.png")
 
-def plot_results_by_commodity() -> str:
+def plot_results_by_commodity():
     try:
         grouped_results = get_grouped_results_by_commodity()
         
-        bar_thickness = 0.6
-        heights = [1 + max(len(data["results"]), 2) * 0.5 for data in grouped_results.values()]
+        bar_height = 0.6  # fixed thickness for all bars
+        section_heights = [len(data["results"]) for data in grouped_results.values()]
         
-        fig = plt.figure(figsize=(10, sum(heights)))
-        gs = GridSpec(len(grouped_results), 1, height_ratios=heights)
+        fig = plt.figure(figsize=(10, sum(section_heights)))
+        gs = GridSpec(len(grouped_results), 1, height_ratios=section_heights)
         
         for commodity_idx, (_, data) in enumerate(grouped_results.items()):
             ax = fig.add_subplot(gs[commodity_idx])
             
-            sns.barplot(x=data["scores"],
-                        y=data["results"],
-                        ax=ax,
-                        color=data["colour"],
-                        width=bar_thickness
+            y_pos = range(len(data["results"]))
+            
+            ax.barh(
+                y=y_pos,
+                width=data["scores"],
+                height=bar_height,
+                color=data["colour"]
             )
             
-            ax.set_title(data["title"], 
-                        fontsize=20,
-                        fontweight="bold", 
-                        color=data["colour"],
-                        loc="left",
-                        pad=10
+            # fixed limit to avoid stretched bars for singular case
+            ax.set_ylim(-0.5, len(data["results"]) - 0.5)
+            
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(
+                data["results"],
+                fontsize=10,
+                fontstyle="italic",
+                color="#333333"
+            )
+            
+            ax.set_title(
+                data["title"],
+                fontsize=20,
+                fontweight="bold",
+                color=data["colour"],
+                loc="left",
+                pad=10
             )
             
             ax.set_xlim(0, max(data["scores"]))
             ax.set_xticks([])
             
-            labels = [item.get_text() for item in ax.get_yticklabels()]
-            ax.set_yticklabels(labels,
-                            fontsize=10,
-                            fontstyle="italic",
-                            color="#333333"
-            )
-            sns.despine(ax=ax, top=True, bottom=True, right=True)
+            sns.despine(ax=ax, top=True, bottom=True, right=True, left=False)
             
             max_score = max(data["scores"])
             for score_idx, (value, _) in enumerate(zip(data["scores"], data["results"])):
                 offset = max_score * 0.02
-                ax.text(value + offset, score_idx, f"{value:.1f}", 
+                ax.text(
+                    value + offset,
+                    score_idx,
+                    f"{value:.1f} GxM",
                     va="center",
                     ha="left",
                     fontsize=10,
-            )
+                    fontweight="bold",
+                    fontstyle="italic",
+                )
         
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.1)
-        
+        plt.show()
+            
         filename = _gen_filename()
         
         plt.savefig(filename, dpi=300, bbox_inches="tight")
@@ -891,22 +918,6 @@ def summarize_alerts() -> None:
     global num_sensitive
     alert_list = list(alerts.find({}))
     metal_list = list(metals.find({}))
-
-    legal_metals = [
-        "Aluminium",
-        "Copper",
-        "Gold",
-        "Iron",
-        "Lithium"
-        "Magnesium",
-        "Molybdenum",
-        "Nickel",
-        "Palladium",
-        "Platinum",
-        "Silver",
-        "Uranium",
-        "Zinc"
-    ]
     
     screened_metals = standardize_metal_prices(metal_list, legal_metals)
     file = plot_results_by_commodity()
@@ -1826,22 +1837,6 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
 def update_metals():
     update_metal_prices()
     
-    legal_metals = [
-        "Aluminium",
-        "Copper",
-        "Gold",
-        "Iron",
-        "Lithium"
-        "Magnesium",
-        "Molybdenum",
-        "Nickel",
-        "Palladium",
-        "Platinum",
-        "Silver",
-        "Uranium",
-        "Zinc"
-    ]
-    
     filtered_metals = standardize_metal_prices(metals.find({}), legal_metals)
     
     for metal in filtered_metals:
@@ -1860,6 +1855,8 @@ def update_metals():
             push_to_collection(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), payload)
         else:
             update_collection_item(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), discovered, payload)
+            
+    logger.info("Webflow metal prices updated")
             
 
 @asynccontextmanager
