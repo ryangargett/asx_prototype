@@ -68,7 +68,7 @@ collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
 num_sensitive = 0
 
 db = mongo_client["main"]
-documents = db["documents_new_3"]
+documents = db["documents_new_4"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
@@ -113,6 +113,7 @@ except Exception as e:
     logger.error(f"Twitter connection failed: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
+news_access_token = os.getenv("NEWS_API_KEY")
 
 def get_email_list() -> list[dict]:
     """Returns a list of email addresses from Memberstack, filtered to only include those with email alerts enabled
@@ -342,9 +343,7 @@ def plot_results_by_commodity():
                     fontstyle="italic",
                 )
         
-        plt.tight_layout()
-        plt.show()
-            
+        plt.tight_layout()    
         filename = _gen_filename()
         
         plt.savefig(filename, dpi=300, bbox_inches="tight")
@@ -354,33 +353,42 @@ def plot_results_by_commodity():
 
     return filename
 
-def get_grouped_results_by_commodity() -> dict: 
+def get_grouped_results_by_commodity() -> dict:
     results = alerts.find({})
-    
     grouped_results = {}
-    
+
     for result in results:
-        for commodity in result["materials"]:
-            if commodity not in grouped_results:
-                grouped_results[commodity] = {
-                    "results": [],
-                    "scores": [],
-                    "colour": get_colour_from_commodity(commodity),
-                    "title": commodity
-                }
-            grouped_results[commodity]["results"].append(f"{result['ticker']}\n{result['project_name']}")
-            grouped_results[commodity]["scores"].append(result["score"])
-    
+        commodity = result.get("best_material")
+        gxm = result.get("best_gxm")
+        ticker = result.get("ticker", "Unknown")
+        project_name = result.get("project_name", "Unknown")
+
+        if commodity not in grouped_results:
+            grouped_results[commodity] = {
+                "results": [],
+                "scores": [],
+                "colour": get_colour_from_commodity(commodity),
+                "title": commodity
+            }
+
+        label = f"{ticker}\n{project_name}"
+        grouped_results[commodity]["results"].append(label)
+        grouped_results[commodity]["scores"].append(gxm)
+
     for data in grouped_results.values():
         sorted_pairs = sorted(zip(data["scores"], data["results"]), key=lambda x: x[0])
-        data["scores"], data["results"] = zip(*sorted_pairs) if sorted_pairs else ([], [])
-        
+        if sorted_pairs:
+            scores, results = zip(*sorted_pairs)
+            data["scores"] = list(scores)
+            data["results"] = list(results)
+        else:
+            data["scores"] = []
+            data["results"] = []
+
     return grouped_results
 
 def email_content(content: str, title: str) -> None:
-    
     emails = get_email_list()
-    
     for email in emails:
     
         response = requests.post(
@@ -434,19 +442,18 @@ def collect_for_email(max_articles: int = 10) -> None:
     except Exception as e:
         logger.error(f"Error cleaning collated articles after email send: {e}")
 
-def reset_daily_announcements() -> None:
+def reset_collection(collection_id: str) -> None:
     offset = 0
     page_limit = 100
     collected_all = False
     all_items = []
-    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
 
     logger.warning("Beginning reset process....")
 
     while not collected_all:
         try:
             response = requests.get(
-            f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
             headers = {
                 "Authorization": "Bearer " + webflow_access_token,
                 "Content-Type": "application/json"
@@ -467,15 +474,24 @@ def reset_daily_announcements() -> None:
         else:
             offset += page_limit
             
-    logger.info(f"Found {len(all_items)} announcements to reset.")
+    logger.info(f"Found {len(all_items)} items to reset.")
             
     if len(all_items) > 0:
         for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
-        logger.warning(f"No announcements found in collection {collection_id} to reset")
-           
-    logger.info(f"Announcements successfully reset")
+        logger.warning(f"No items found in collection {collection_id} to reset")
+        
+def reset() -> None:
+    logger.info("Beginning overnight reset process")
+    
+    logger.info("Stage 1: Resetting announcements")
+    reset_collection(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"))
+    
+    logger.info("Stage 2: Resetting news")
+    reset_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"))
+    
+    logger.info("Reset completed successfully")
 
 def get_hash(file_path: str) -> str:
     try:
@@ -485,34 +501,6 @@ def get_hash(file_path: str) -> str:
     except Exception as e:
         logger.error(f"Error hashing file: {e}")
         return ""
-    
-'''
-def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
-    try:
-        post_id = str(uuid.uuid4())
-        
-        parsed_content = read_pdf(file_path)
-        summarized_content = summarize_content(parsed_content)
-        suggested_title = suggest_title(parsed_content)
-        suggested_image_kwords = suggest_image_kwords(parsed_content)
-        cover_image_url = get_url_from_keyword(suggested_image_kwords)
-        
-        created_at = datetime.now(timezone.utc)
-        
-        posts.insert_one({
-            "post_id": post_id,
-            "title": suggested_title,
-            "content": summarized_content,
-            "cover_image": cover_image_url if cover_image_url is not None else "GENERIC/PLACEHOLDER.svg",
-            "created_at": created_at,
-            "modified_at": created_at,
-            "pdf_id": hash,
-            #"sector": _get_sector_from_ticker(ticker)
-        })
-
-    except Exception as e:
-        print(f"Error creating post from feed: {e}")
-'''
 
 async def generate_content(file_path: str, ticker: str) -> dict:
     try:
@@ -619,7 +607,7 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
             }
         )
         
-        response.raise_for_status()
+        #response.raise_for_status()
 
         response_formatted = response.json()
         message = response_formatted.get("message", None)
@@ -919,7 +907,9 @@ def summarize_alerts() -> None:
     alert_list = list(alerts.find({}))
     metal_list = list(metals.find({}))
     
+    file = None
     screened_metals = standardize_metal_prices(metal_list, legal_metals)
+    
     file = plot_results_by_commodity()
     
     if file:
@@ -980,9 +970,9 @@ def add_to_email(article_title: str, article_summary: str, article_image: str, a
         
 def _format_assay(drill_metrics: dict) -> str:
     formatted_assay = ""
+    
     formatted_assay += f"{drill_metrics['drill_width_standardized']} m @ "
-
-    formatted_assay += drill_metrics["raw_materials"]
+    formatted_assay += drill_metrics["materials"]
     formatted_assay += f" from {drill_metrics['drill_depth_standardized']} m"
     logger.info(formatted_assay)
     return formatted_assay
@@ -994,7 +984,7 @@ def _is_significant(drill_score: float, market_cap: float) -> bool:
         significant = True
     elif drill_score >= 10 and market_cap <= 1e7: # low yield BUT low market cap (< 10M)
         significant = True
-    elif drill_score >= 50 and market_cap >= 1e8: # medium yield and high market cap (>100M)
+    elif drill_score >= 50 and market_cap >= 1e8: # medium yield AND high market cap (> 100M)
         significant = True
     
     return significant
@@ -1092,7 +1082,8 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
-                    "materials": results["drill_materials"],
+                    "best_material": results["drill_material"]["name"],
+                    "best_gxm": results["drill_material"]["gxm"],
                     "project_name": results["drill_results"]["project_name"],
                     "prospect_name": results["drill_results"]["prospect_name"],
                 })
@@ -1437,13 +1428,13 @@ async def process_announcement(announcement: dict) -> None:
                         }
                     )
                     
-                else:
-                    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
+                #else:
+                #    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
             except Exception as e:
                 logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
                 _remove_file(f_name)     
-        else:
-            logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
+        #else:
+        #    logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
     else:
         logger.error(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to malformed content and / or missing document URL.")
         
@@ -1466,7 +1457,6 @@ async def renew_announcements() -> None:
             logger.info(f"No new announcements found since last poll, skipping....")
         else:
             logger.info(f"New announcements found, processing....")
-            
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
             announcement_processing_tasks = []
@@ -1552,7 +1542,11 @@ def get_assay_metrics(result: str) -> dict:
     
     metrics = {
         "drill_width_standardized": None,
-        "raw_materials": None,
+        "materials": [],
+        "best_material": {
+            "name": None,
+            "yield": -np.inf,
+        },
         "standardized_materials": None,
         "drill_depth_standardized": 0.0
     }
@@ -1582,7 +1576,7 @@ def get_assay_metrics(result: str) -> dict:
         return None
     
     raw_materials = assay_components[1].replace("[", "").replace("]", "").strip()
-    metrics["raw_materials"] = raw_materials
+    metrics["materials"] = raw_materials
     metrics["standardized_materials"] = {}
     materials = [m.strip() for m in raw_materials.split(",") if m.strip()]
     
@@ -1596,6 +1590,9 @@ def get_assay_metrics(result: str) -> dict:
             standardized_measurement = _standardize_measurement(parts[:-1], parts[-1])
             if standardized_measurement:
                 metrics["standardized_materials"][name] = standardized_measurement
+                if standardized_measurement > metrics["best_material"]["yield"]:
+                    metrics["best_material"]["name"] = name
+                    metrics["best_material"]["yield"] = standardized_measurement
             else:
                 logger.warning(f"Failed to standardize material component '{material}'")
                 return None
@@ -1636,10 +1633,13 @@ def _format_market_cap(market_cap: int):
         return f"{market_cap}"
     
 def get_drill_score(assay_metrics: dict) -> dict:
-    
+
     drill_score = {
         "score": 0.0,
-        "materials": []
+        "material": {
+            "name": None,
+            "gxm": 0.0,
+        }
     }
     if assay_metrics["drill_width_standardized"] and assay_metrics["standardized_materials"] and assay_metrics["drill_depth_standardized"]:
         drill_width_standardized = assay_metrics["drill_width_standardized"]
@@ -1654,7 +1654,6 @@ def get_drill_score(assay_metrics: dict) -> dict:
         for material, value in standardized_materials.items():
             metal_doc = metals.find_one({"name": material})
             if metal_doc and "adjusted_price" in metal_doc:
-                drill_score["materials"].append(material)
                 material_value = round(metal_doc["adjusted_price"] * value, 4)
             else:
                 logger.warning(f"Received assay with unknown material {material}, defaulting to gold")
@@ -1665,6 +1664,16 @@ def get_drill_score(assay_metrics: dict) -> dict:
         total_value = round(sum(material_values), 4)
         gold_equivalent = round(total_value / gold_price, 4)
         gxm = gold_equivalent * drill_width_standardized
+        
+        best_metal_doc = metals.find_one({"name": assay_metrics["best_material"]["name"]})
+        if best_metal_doc is None:
+            logger.warning(f"Received assay with unknown best material {assay_metrics['best_material']['name']}, defaulting to gold")
+            best_metal_doc = gold_doc
+        best_metal_value = round(best_metal_doc["adjusted_price"] * assay_metrics["best_material"]["yield"], 4)
+        
+        drill_score["material"]["name"] = assay_metrics["best_material"]["name"]
+        drill_score["material"]["gxm"] = (best_metal_value / gold_price) * drill_width_standardized
+        
         #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
         drill_score["score"] = gxm #TODO: Eventually work in modifier once client is happy
     else:
@@ -1709,8 +1718,8 @@ def format_assay_hole_list(assays: str, max_assays: int = 5) -> str:
 async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
         "drill_metrics": None,
-        "drill_materials": [],
         "drill_score": 0.0,
+        "drill_material": None,
         "drill_results": None
     }
     
@@ -1735,7 +1744,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
                 logger.info("Concluded assay analysis")
                 drill_score = get_drill_score(results["drill_metrics"])
                 results["drill_score"] = drill_score["score"]
-                results["drill_materials"] = drill_score["materials"]
+                results["drill_material"] = drill_score["material"]
             else:
                 logger.error("Unexpected error occured when analyzing drill results, retrying....")
         else:
@@ -1857,8 +1866,97 @@ def update_metals():
             update_collection_item(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), discovered, payload)
             
     logger.info("Webflow metal prices updated")
-            
+    
+def _validate_image(url: str, timeout: int = 10, min_bytes: int = 2048) -> bool:
+    try:
+        response = requests.get(url, timeout=timeout, stream=True)
+        
+        content_type = response.headers.get("Content-Type", "")
+        content_length = response.headers.get("Content-Length")
 
+        if "image" not in content_type:
+            return False
+        
+        if content_length is not None and int(content_length) < min_bytes:
+            return False
+
+        # check response size, will reject tracking pixels / otherwise not-useful images
+        chunk = next(response.iter_content(chunk_size=min_bytes), b'')
+        if len(chunk) < min_bytes:
+            return False
+
+        return True
+
+    except Exception as e:
+        logger.debug(f"Failed to validate image URL {url}: {e}")
+        return False
+    
+def renew_news(max_title_length: int = 100) -> None:
+    published_on = datetime.now().strftime("%Y-%m-%d")
+    industries = "Industrials, Financial Services, Basic Materials, Energy, Financial, Industrial Goods"
+    collected_all = False
+    
+    num_articles = 0
+    page_num = 1
+    
+    articles = []
+    
+    try:
+        while not collected_all: 
+            response = requests.get(url = f"https://api.marketaux.com/v1/news/all?api_token={news_access_token}",
+                                    headers = {
+                                        "Content-Type": "application/json"
+                                    },
+                                    params={
+                                        "industries": industries,
+                                        "published_on": published_on,
+                                        "language": "en",
+                                        "page": page_num
+                                    })
+            
+            #response.raise_for_status()
+            response = response.json()
+        
+            num_articles = response["meta"]["found"]
+            if num_articles > len(articles) and response["meta"]["returned"] > 0:
+                articles.extend(response["data"])
+                page_num += 1
+            else:
+                collected_all = True
+                
+        logger.info(f"Successfully collected {len(articles)} news articles")
+                
+    except Exception as e:
+        logger.error(f"Unexpected error fetching news: {e}")
+    
+    with open("./data/news.json", "w") as f:
+        json.dump(articles, f, indent=4)
+        
+    for article in tqdm(articles, desc="News articles"):
+        found = search_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), article["uuid"], "news-id", suppress_warning=True)
+        if not found:
+            
+            raw_title = article["title"]
+            if len(raw_title) > max_title_length:
+                title = raw_title[:max_title_length] + "..."
+            else:
+                title = raw_title
+            
+            if not _validate_image(article["image_url"]):
+                image_url = "https://rtwimages.s3.ap-southeast-2.amazonaws.com/PLACEHOLDER.png"
+            else:
+                image_url = article["image_url"]
+            
+            payload = {
+                "name": raw_title,
+                "news-title": title,
+                "news-link": article["url"],
+                "news-image": image_url,
+                "news-datetime": article["published_at"],
+                "news-id": article["uuid"]
+            }
+            push_to_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), payload, silent = True)
+        
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
@@ -1876,6 +1974,17 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         name="update_metal_prices"
     )
+        
+    # Global news update (every 10 mins on ALL days)
+    scheduler.add_job(
+        renew_news,
+        "cron",
+        day_of_week="*",
+        hour="*",
+        minute="*/5",
+        max_instances=1,
+        name="renew_news"
+    )
     
     # ASX Announcement polling (trading days only)
     scheduler.add_job(
@@ -1890,9 +1999,9 @@ async def lifespan(app: FastAPI):
     
     # Daily reset (23:30 on trading days)
     scheduler.add_job(
-        reset_daily_announcements,
+        reset,
         "cron",
-        day_of_week="mon,tue,wed,thu",
+        day_of_week="*",
         hour=23,
         minute=30,
         max_instances=1,
