@@ -113,6 +113,7 @@ except Exception as e:
     logger.error(f"Twitter connection failed: {e}")
 
 webflow_access_token = os.getenv("WEBFLOW_API_KEY")
+news_access_token = os.getenv("NEWS_API_KEY")
 
 def get_email_list() -> list[dict]:
     """Returns a list of email addresses from Memberstack, filtered to only include those with email alerts enabled
@@ -598,7 +599,7 @@ def push_to_collection(collection_id: str, payload: dict, silent: bool = False) 
             }
         )
         
-        response.raise_for_status()
+        #response.raise_for_status()
 
         response_formatted = response.json()
         message = response_formatted.get("message", None)
@@ -1419,13 +1420,13 @@ async def process_announcement(announcement: dict) -> None:
                         }
                     )
                     
-                else:
-                    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
+                #else:
+                #    logger.warning(f"Announcement {announcement['fileId']} already exists in database, skipping download process.")                               
             except Exception as e:
                 logger.error(f"Error validating announcement {announcement.get('fileId', 'N/A')}: {e}")
                 _remove_file(f_name)     
-        else:
-            logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
+        #else:
+        #    logger.warning(f"Announcement {announcement['fileId']} references missing stock code, skipping download process.")      
     else:
         logger.error(f"Skipping announcement {announcement.get('fileId', 'N/A')} due to malformed content and / or missing document URL.")
         
@@ -1857,8 +1858,70 @@ def update_metals():
             update_collection_item(os.getenv("WEBFLOW_METALS_COLLECTION_ID"), discovered, payload)
             
     logger.info("Webflow metal prices updated")
-            
+    
 
+    
+def renew_news(max_title_length: int = 100) -> None:
+    published_on = datetime.now().strftime("%Y-%m-%d")
+    industries = "Industrials, Financial Services, Basic Materials, Energy, Financial, Industrial Goods"
+    collected_all = False
+    
+    num_articles = 0
+    page_num = 1
+    
+    articles = []
+    
+    try:
+        while not collected_all: 
+            response = requests.get(url = f"https://api.marketaux.com/v1/news/all?api_token={news_access_token}",
+                                    headers = {
+                                        "Content-Type": "application/json"
+                                    },
+                                    params={
+                                        "industries": industries,
+                                        "published_on": published_on,
+                                        "language": "en",
+                                        "page": page_num
+                                    })
+            
+            #response.raise_for_status()
+            response = response.json()
+        
+            num_articles = response["meta"]["found"]
+            if num_articles > len(articles) and response["meta"]["returned"] > 0:
+                articles.extend(response["data"])
+                page_num += 1
+            else:
+                collected_all = True
+                
+        logger.info(f"Successfully collected {len(articles)} news articles")
+                
+    except Exception as e:
+        logger.error(f"Unexpected error fetching news: {e}")
+    
+    with open("./data/news.json", "w") as f:
+        json.dump(articles, f, indent=4)
+        
+    for article in tqdm(articles, desc="News articles"):
+        found = search_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), article["uuid"], "news-id", suppress_warning=True)
+        if not found:
+            
+            raw_title = article["title"]
+            if len(raw_title) > max_title_length:
+                title = raw_title[:max_title_length] + "..."
+            else:
+                title = raw_title
+            
+            payload = {
+                "name": raw_title,
+                "news-title": title,
+                "news-link": article["url"],
+                "news-image": article["image_url"],
+                "news-datetime": article["published_at"],
+                "news-id": article["uuid"]
+            }
+            push_to_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), payload, silent = True)
+        
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
@@ -1875,6 +1938,17 @@ async def lifespan(app: FastAPI):
         hour="2,4,8,10,12,14,16,18,20,22",
         max_instances=1,
         name="update_metal_prices"
+    )
+        
+    # Global news update (every 10 mins on ALL days)
+    scheduler.add_job(
+        renew_news,
+        "cron",
+        day_of_week="*",
+        hour="*",
+        minute="*/5",
+        max_instances=1,
+        name="renew_news"
     )
     
     # ASX Announcement polling (trading days only)
