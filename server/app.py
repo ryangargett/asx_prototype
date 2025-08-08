@@ -442,19 +442,18 @@ def collect_for_email(max_articles: int = 10) -> None:
     except Exception as e:
         logger.error(f"Error cleaning collated articles after email send: {e}")
 
-def reset_daily_announcements() -> None:
+def reset_collection(collection_id: str) -> None:
     offset = 0
     page_limit = 100
     collected_all = False
     all_items = []
-    announcement_collection_id = os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID")
 
     logger.warning("Beginning reset process....")
 
     while not collected_all:
         try:
             response = requests.get(
-            f"https://api.webflow.com/v2/collections/{announcement_collection_id}/items/live",
+            f"https://api.webflow.com/v2/collections/{collection_id}/items/live",
             headers = {
                 "Authorization": "Bearer " + webflow_access_token,
                 "Content-Type": "application/json"
@@ -475,15 +474,24 @@ def reset_daily_announcements() -> None:
         else:
             offset += page_limit
             
-    logger.info(f"Found {len(all_items)} announcements to reset.")
+    logger.info(f"Found {len(all_items)} items to reset.")
             
     if len(all_items) > 0:
         for item in tqdm(all_items, desc="Deleting items"):
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
-        logger.warning(f"No announcements found in collection {collection_id} to reset")
-           
-    logger.info(f"Announcements successfully reset")
+        logger.warning(f"No items found in collection {collection_id} to reset")
+        
+def reset() -> None:
+    logger.info("Beginning overnight reset process")
+    
+    logger.info("Stage 1: Resetting announcements")
+    reset_collection(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"))
+    
+    logger.info("Stage 2: Resetting news")
+    reset_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"))
+    
+    logger.info("Reset completed successfully")
 
 def get_hash(file_path: str) -> str:
     try:
@@ -1859,7 +1867,29 @@ def update_metals():
             
     logger.info("Webflow metal prices updated")
     
+def _validate_image(url: str, timeout: int = 10, min_bytes: int = 2048) -> bool:
+    try:
+        response = requests.get(url, timeout=timeout, stream=True)
+        
+        content_type = response.headers.get("Content-Type", "")
+        content_length = response.headers.get("Content-Length")
 
+        if "image" not in content_type:
+            return False
+        
+        if content_length is not None and int(content_length) < min_bytes:
+            return False
+
+        # check response size, will reject tracking pixels / otherwise not-useful images
+        chunk = next(response.iter_content(chunk_size=min_bytes), b'')
+        if len(chunk) < min_bytes:
+            return False
+
+        return True
+
+    except Exception as e:
+        logger.debug(f"Failed to validate image URL {url}: {e}")
+        return False
     
 def renew_news(max_title_length: int = 100) -> None:
     published_on = datetime.now().strftime("%Y-%m-%d")
@@ -1912,11 +1942,16 @@ def renew_news(max_title_length: int = 100) -> None:
             else:
                 title = raw_title
             
+            if not _validate_image(article["image_url"]):
+                image_url = "https://rtwimages.s3.ap-southeast-2.amazonaws.com/PLACEHOLDER.png"
+            else:
+                image_url = article["image_url"]
+            
             payload = {
                 "name": raw_title,
                 "news-title": title,
                 "news-link": article["url"],
-                "news-image": article["image_url"],
+                "news-image": image_url,
                 "news-datetime": article["published_at"],
                 "news-id": article["uuid"]
             }
@@ -1964,9 +1999,9 @@ async def lifespan(app: FastAPI):
     
     # Daily reset (23:30 on trading days)
     scheduler.add_job(
-        reset_daily_announcements,
+        reset,
         "cron",
-        day_of_week="mon,tue,wed,thu",
+        day_of_week="*",
         hour=23,
         minute=30,
         max_instances=1,
