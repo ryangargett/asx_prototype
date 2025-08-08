@@ -68,7 +68,7 @@ collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
 num_sensitive = 0
 
 db = mongo_client["main"]
-documents = db["documents_new_3"]
+documents = db["documents_new_4"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
@@ -342,9 +342,7 @@ def plot_results_by_commodity():
                     fontstyle="italic",
                 )
         
-        plt.tight_layout()
-        plt.show()
-            
+        plt.tight_layout()    
         filename = _gen_filename()
         
         plt.savefig(filename, dpi=300, bbox_inches="tight")
@@ -354,33 +352,42 @@ def plot_results_by_commodity():
 
     return filename
 
-def get_grouped_results_by_commodity() -> dict: 
+def get_grouped_results_by_commodity() -> dict:
     results = alerts.find({})
-    
     grouped_results = {}
-    
+
     for result in results:
-        for commodity in result["materials"]:
-            if commodity not in grouped_results:
-                grouped_results[commodity] = {
-                    "results": [],
-                    "scores": [],
-                    "colour": get_colour_from_commodity(commodity),
-                    "title": commodity
-                }
-            grouped_results[commodity]["results"].append(f"{result['ticker']}\n{result['project_name']}")
-            grouped_results[commodity]["scores"].append(result["score"])
-    
+        commodity = result.get("best_material")
+        gxm = result.get("best_gxm")
+        ticker = result.get("ticker", "Unknown")
+        project_name = result.get("project_name", "Unknown")
+
+        if commodity not in grouped_results:
+            grouped_results[commodity] = {
+                "results": [],
+                "scores": [],
+                "colour": get_colour_from_commodity(commodity),
+                "title": commodity
+            }
+
+        label = f"{ticker}\n{project_name}"
+        grouped_results[commodity]["results"].append(label)
+        grouped_results[commodity]["scores"].append(gxm)
+
     for data in grouped_results.values():
         sorted_pairs = sorted(zip(data["scores"], data["results"]), key=lambda x: x[0])
-        data["scores"], data["results"] = zip(*sorted_pairs) if sorted_pairs else ([], [])
-        
+        if sorted_pairs:
+            scores, results = zip(*sorted_pairs)
+            data["scores"] = list(scores)
+            data["results"] = list(results)
+        else:
+            data["scores"] = []
+            data["results"] = []
+
     return grouped_results
 
 def email_content(content: str, title: str) -> None:
-    
     emails = get_email_list()
-    
     for email in emails:
     
         response = requests.post(
@@ -485,34 +492,6 @@ def get_hash(file_path: str) -> str:
     except Exception as e:
         logger.error(f"Error hashing file: {e}")
         return ""
-    
-'''
-def create_from_feed(file_path: str, hash: str, ticker: str) -> None:
-    try:
-        post_id = str(uuid.uuid4())
-        
-        parsed_content = read_pdf(file_path)
-        summarized_content = summarize_content(parsed_content)
-        suggested_title = suggest_title(parsed_content)
-        suggested_image_kwords = suggest_image_kwords(parsed_content)
-        cover_image_url = get_url_from_keyword(suggested_image_kwords)
-        
-        created_at = datetime.now(timezone.utc)
-        
-        posts.insert_one({
-            "post_id": post_id,
-            "title": suggested_title,
-            "content": summarized_content,
-            "cover_image": cover_image_url if cover_image_url is not None else "GENERIC/PLACEHOLDER.svg",
-            "created_at": created_at,
-            "modified_at": created_at,
-            "pdf_id": hash,
-            #"sector": _get_sector_from_ticker(ticker)
-        })
-
-    except Exception as e:
-        print(f"Error creating post from feed: {e}")
-'''
 
 async def generate_content(file_path: str, ticker: str) -> dict:
     try:
@@ -919,7 +898,9 @@ def summarize_alerts() -> None:
     alert_list = list(alerts.find({}))
     metal_list = list(metals.find({}))
     
+    file = None
     screened_metals = standardize_metal_prices(metal_list, legal_metals)
+    
     file = plot_results_by_commodity()
     
     if file:
@@ -980,9 +961,9 @@ def add_to_email(article_title: str, article_summary: str, article_image: str, a
         
 def _format_assay(drill_metrics: dict) -> str:
     formatted_assay = ""
+    
     formatted_assay += f"{drill_metrics['drill_width_standardized']} m @ "
-
-    formatted_assay += drill_metrics["raw_materials"]
+    formatted_assay += drill_metrics["materials"]
     formatted_assay += f" from {drill_metrics['drill_depth_standardized']} m"
     logger.info(formatted_assay)
     return formatted_assay
@@ -994,7 +975,7 @@ def _is_significant(drill_score: float, market_cap: float) -> bool:
         significant = True
     elif drill_score >= 10 and market_cap <= 1e7: # low yield BUT low market cap (< 10M)
         significant = True
-    elif drill_score >= 50 and market_cap >= 1e8: # medium yield and high market cap (>100M)
+    elif drill_score >= 50 and market_cap >= 1e8: # medium yield AND high market cap (> 100M)
         significant = True
     
     return significant
@@ -1092,7 +1073,8 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                     "article_url": article_meta["url"],
                     "document_title": article_meta["document_title"],
                     "document_url": article_meta["document"],
-                    "materials": results["drill_materials"],
+                    "best_material": results["drill_material"]["name"],
+                    "best_gxm": results["drill_material"]["gxm"],
                     "project_name": results["drill_results"]["project_name"],
                     "prospect_name": results["drill_results"]["prospect_name"],
                 })
@@ -1466,7 +1448,6 @@ async def renew_announcements() -> None:
             logger.info(f"No new announcements found since last poll, skipping....")
         else:
             logger.info(f"New announcements found, processing....")
-            
             progress_bar = tqdm(total=len(daily_announcements), desc="Processing announcements")
             
             announcement_processing_tasks = []
@@ -1552,7 +1533,11 @@ def get_assay_metrics(result: str) -> dict:
     
     metrics = {
         "drill_width_standardized": None,
-        "raw_materials": None,
+        "materials": [],
+        "best_material": {
+            "name": None,
+            "yield": -np.inf,
+        },
         "standardized_materials": None,
         "drill_depth_standardized": 0.0
     }
@@ -1582,7 +1567,7 @@ def get_assay_metrics(result: str) -> dict:
         return None
     
     raw_materials = assay_components[1].replace("[", "").replace("]", "").strip()
-    metrics["raw_materials"] = raw_materials
+    metrics["materials"] = raw_materials
     metrics["standardized_materials"] = {}
     materials = [m.strip() for m in raw_materials.split(",") if m.strip()]
     
@@ -1596,6 +1581,9 @@ def get_assay_metrics(result: str) -> dict:
             standardized_measurement = _standardize_measurement(parts[:-1], parts[-1])
             if standardized_measurement:
                 metrics["standardized_materials"][name] = standardized_measurement
+                if standardized_measurement > metrics["best_material"]["yield"]:
+                    metrics["best_material"]["name"] = name
+                    metrics["best_material"]["yield"] = standardized_measurement
             else:
                 logger.warning(f"Failed to standardize material component '{material}'")
                 return None
@@ -1636,10 +1624,13 @@ def _format_market_cap(market_cap: int):
         return f"{market_cap}"
     
 def get_drill_score(assay_metrics: dict) -> dict:
-    
+
     drill_score = {
         "score": 0.0,
-        "materials": []
+        "material": {
+            "name": None,
+            "gxm": 0.0,
+        }
     }
     if assay_metrics["drill_width_standardized"] and assay_metrics["standardized_materials"] and assay_metrics["drill_depth_standardized"]:
         drill_width_standardized = assay_metrics["drill_width_standardized"]
@@ -1654,7 +1645,6 @@ def get_drill_score(assay_metrics: dict) -> dict:
         for material, value in standardized_materials.items():
             metal_doc = metals.find_one({"name": material})
             if metal_doc and "adjusted_price" in metal_doc:
-                drill_score["materials"].append(material)
                 material_value = round(metal_doc["adjusted_price"] * value, 4)
             else:
                 logger.warning(f"Received assay with unknown material {material}, defaulting to gold")
@@ -1665,6 +1655,16 @@ def get_drill_score(assay_metrics: dict) -> dict:
         total_value = round(sum(material_values), 4)
         gold_equivalent = round(total_value / gold_price, 4)
         gxm = gold_equivalent * drill_width_standardized
+        
+        best_metal_doc = metals.find_one({"name": assay_metrics["best_material"]["name"]})
+        if best_metal_doc is None:
+            logger.warning(f"Received assay with unknown best material {assay_metrics['best_material']['name']}, defaulting to gold")
+            best_metal_doc = gold_doc
+        best_metal_value = round(best_metal_doc["adjusted_price"] * assay_metrics["best_material"]["yield"], 4)
+        
+        drill_score["material"]["name"] = assay_metrics["best_material"]["name"]
+        drill_score["material"]["gxm"] = (best_metal_value / gold_price) * drill_width_standardized
+        
         #drill_score = gxm * calc_drill_modifier(gxm, drill_depth_standardized)
         drill_score["score"] = gxm #TODO: Eventually work in modifier once client is happy
     else:
@@ -1709,8 +1709,8 @@ def format_assay_hole_list(assays: str, max_assays: int = 5) -> str:
 async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dict:
     results = {
         "drill_metrics": None,
-        "drill_materials": [],
         "drill_score": 0.0,
+        "drill_material": None,
         "drill_results": None
     }
     
@@ -1735,7 +1735,7 @@ async def get_drill_result(path: str, ticker: str, max_attempts: int = 5) -> dic
                 logger.info("Concluded assay analysis")
                 drill_score = get_drill_score(results["drill_metrics"])
                 results["drill_score"] = drill_score["score"]
-                results["drill_materials"] = drill_score["materials"]
+                results["drill_material"] = drill_score["material"]
             else:
                 logger.error("Unexpected error occured when analyzing drill results, retrying....")
         else:
