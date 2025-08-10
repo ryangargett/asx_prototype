@@ -8,10 +8,11 @@ import pytz
 import random
 import regex as re
 import requests
+import uuid
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from dateutil.parser import parse
 from hashlib import sha256
 from pytz import timezone as tz
@@ -1889,50 +1890,30 @@ def _validate_image(url: str, timeout: int = 10, min_bytes: int = 2048) -> bool:
     except Exception as e:
         logger.debug(f"Failed to validate image URL {url}: {e}")
         return False
+
+def _format_datetime(raw_datetime: str) -> str:
+    dt = datetime.strptime(raw_datetime, "%a, %d %b %Y %H:%M:%S %z")
+    dt_coordinated = dt.astimezone(timezone.utc)
+    return dt_coordinated.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     
 def renew_news(max_title_length: int = 100) -> None:
-    published_on = datetime.now().strftime("%Y-%m-%d")
-    industries = "Industrials, Financial Services, Basic Materials, Energy, Financial, Industrial Goods"
-    collected_all = False
     
-    num_articles = 0
-    page_num = 1
+    response = requests.get(
+        url = "https://stocknewsapi.com/api/v1/category",
+        params = {
+            "token": news_access_token,
+            "section": "alltickers",
+            "topicexclude": "dividend, paywall, paylimitwall, podcast",
+            "page": 1,
+            "items": 3 
+        }
+    )
     
-    articles = []
-    
-    try:
-        while not collected_all: 
-            response = requests.get(url = f"https://api.marketaux.com/v1/news/all?api_token={news_access_token}",
-                                    headers = {
-                                        "Content-Type": "application/json"
-                                    },
-                                    params={
-                                        "industries": industries,
-                                        "published_on": published_on,
-                                        "language": "en",
-                                        "page": page_num
-                                    })
-            
-            #response.raise_for_status()
-            response = response.json()
-        
-            num_articles = response["meta"]["found"]
-            if num_articles > len(articles) and response["meta"]["returned"] > 0:
-                articles.extend(response["data"])
-                page_num += 1
-            else:
-                collected_all = True
-                
-        logger.info(f"Successfully collected {len(articles)} news articles")
-                
-    except Exception as e:
-        logger.error(f"Unexpected error fetching news: {e}")
-    
-    with open("./data/news.json", "w") as f:
-        json.dump(articles, f, indent=4)
+    response = response.json()
+    articles = response["data"]
         
     for article in tqdm(articles, desc="News articles"):
-        found = search_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), article["uuid"], "news-id", suppress_warning=True)
+        found = search_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), article["news_url"], "news-link", suppress_warning=True)
         if not found:
             
             raw_title = article["title"]
@@ -1949,10 +1930,10 @@ def renew_news(max_title_length: int = 100) -> None:
             payload = {
                 "name": raw_title,
                 "news-title": title,
-                "news-link": article["url"],
+                "news-link": article["news_url"],
                 "news-image": image_url,
-                "news-datetime": article["published_at"],
-                "news-id": article["uuid"]
+                "news-datetime": _format_datetime(article["date"]),
+                "news-id": str(uuid.uuid4())
             }
             push_to_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), payload, silent = True)
         
@@ -1968,7 +1949,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         update_metals,
         "cron",
-        day_of_week="mon,tue,wed,thu,fri",
+        day_of_week="mon,tue,wed,thu,fri,sat,sun",
         hour="2,4,8,10,12,14,16,18,20,22",
         max_instances=1,
         name="update_metal_prices"
@@ -2000,7 +1981,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         reset_announcements,
         "cron",
-        day_of_week="mon,tues,wed,thur",
+        day_of_week="mon,tue,wed,thu",
         hour=23,
         minute=30,
         max_instances=1,
