@@ -1949,7 +1949,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         update_metals,
         "cron",
-        day_of_week="mon,tue,wed,thu,fri",
+        day_of_week="mon,tue,wed,thu,fri,sat,sun",
         hour="2,4,8,10,12,14,16,18,20,22",
         max_instances=1,
         name="update_metal_prices"
@@ -1981,7 +1981,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         reset_announcements,
         "cron",
-        day_of_week="mon,tues,wed,thur",
+        day_of_week="mon,tue,wed,thu",
         hour=23,
         minute=30,
         max_instances=1,
