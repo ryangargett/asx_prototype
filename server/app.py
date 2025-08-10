@@ -481,17 +481,16 @@ def reset_collection(collection_id: str) -> None:
            delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
     else:
         logger.warning(f"No items found in collection {collection_id} to reset")
-        
-def reset() -> None:
-    logger.info("Beginning overnight reset process")
-    
-    logger.info("Stage 1: Resetting announcements")
-    reset_collection(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"))
-    
-    logger.info("Stage 2: Resetting news")
+
+def reset_news() -> None:
+    logger.info("Beginning reset process for news")
     reset_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"))
+    logger.info("Successfully concluded reset process for news")
     
-    logger.info("Reset completed successfully")
+def reset_announcements() -> None:
+    logger.info("Beginning reset process for announcements")
+    reset_collection(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"))
+    logger.info("Successfully concluded reset process for announcements")
 
 def get_hash(file_path: str) -> str:
     try:
@@ -1999,13 +1998,24 @@ async def lifespan(app: FastAPI):
     
     # Daily reset (23:30 on trading days)
     scheduler.add_job(
-        reset,
+        reset_announcements,
         "cron",
-        day_of_week="*",
+        day_of_week="mon,tues,wed,thur",
         hour=23,
         minute=30,
         max_instances=1,
         name="reset_announcements"
+    )
+    
+    # Daily reset (23:30 on trading days)
+    scheduler.add_job(
+        reset_news,
+        "cron",
+        day_of_week="*",
+        hour=23,
+        minute=45,
+        max_instances=1,
+        name="reset_news"
     )
     
     ''' Email collection (09:00, 12:00 and 15:00 on trading days)
