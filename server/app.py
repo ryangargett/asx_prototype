@@ -1237,19 +1237,29 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
         _remove_file(file_path)    
         logger.info(f"Concluded construction process for {file_path} {formal_title}....")
         
-def _format_datetime(unformatted_datetime: str) -> str:
+def _format_datetime(raw_datetime: str, embedded_tz: bool = False) -> str:
     try:
-        dt = datetime.strptime(unformatted_datetime, '%d-%b-%Y %H:%M:%S')
         
-        # localize to proper timezone specified in the api (AWST)
-        api_local_tz = pytz.timezone('Australia/Perth')
-        dt_local = api_local_tz.localize(dt)
+        if embedded_tz:            
+            dt = datetime.strptime(raw_datetime, "%a, %d %b %Y %H:%M:%S %z")
+            dt_coordinated = dt.astimezone(timezone.utc)
+            formatted_dt = dt_coordinated.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         
-        dt_utc = dt_local.astimezone(pytz.UTC)
-        formatted_datetime = dt_utc.isoformat()
-        return formatted_datetime
+        else:
+            
+            dt = datetime.strptime(raw_datetime, '%d-%b-%Y %H:%M:%S')
+            
+            # localize to proper timezone specified in the api (AWST)
+            api_local_tz = pytz.timezone('Australia/Perth')
+            dt_local = api_local_tz.localize(dt)
+            
+            dt_utc = dt_local.astimezone(pytz.UTC)
+            formatted_dt = dt_utc.isoformat()
     except ValueError as e:
         logger.error(f"Error parsing datetime string: {e}")
+        formatted_dt = None
+        
+    return formatted_dt
         
 async def announcement_task_wrapper(announcement: dict, progress_bar: tqdm) -> None:
     try:
@@ -1890,11 +1900,6 @@ def _validate_image(url: str, timeout: int = 10, min_bytes: int = 2048) -> bool:
     except Exception as e:
         logger.debug(f"Failed to validate image URL {url}: {e}")
         return False
-
-def _format_datetime(raw_datetime: str) -> str:
-    dt = datetime.strptime(raw_datetime, "%a, %d %b %Y %H:%M:%S %z")
-    dt_coordinated = dt.astimezone(timezone.utc)
-    return dt_coordinated.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     
 def renew_news(max_title_length: int = 100) -> None:
     
@@ -1903,9 +1908,9 @@ def renew_news(max_title_length: int = 100) -> None:
         params = {
             "token": news_access_token,
             "section": "alltickers",
-            "topicexclude": "dividend, paywall, paylimitwall, podcast",
+            "topicexclude": "cannabis, cramer, dividend, madmoney, paywall, paylimitwall, podcast, wbuffet",
             "page": 1,
-            "items": 3 
+            "items": 5
         }
     )
     
@@ -1932,7 +1937,7 @@ def renew_news(max_title_length: int = 100) -> None:
                 "news-title": title,
                 "news-link": article["news_url"],
                 "news-image": image_url,
-                "news-datetime": _format_datetime(article["date"]),
+                "news-datetime": _format_datetime(article["date"], embedded_tz = True),
                 "news-id": str(uuid.uuid4())
             }
             push_to_collection(os.getenv("WEBFLOW_NEWS_COLLECTION_ID"), payload, silent = True)
