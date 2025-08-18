@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from dateutil.parser import parse
 from hashlib import sha256
 from pytz import timezone as tz
+from typing import Tuple
 
 import httpx
 import pycountry
@@ -388,26 +389,43 @@ def get_grouped_results_by_commodity() -> dict:
 
     return grouped_results
 
+def _format_for_batch_send(email_list: list) -> Tuple[dict, list]:
+    addresses = []
+    batched_recipients = {}
+    
+    for email_idx, email in enumerate(email_list):
+        if email["address"] not in batched_recipients:
+            
+            addresses.append(email["address"])
+            
+            batched_recipients[email["address"]] = {
+                "name": email["name"],
+                "id": email_idx
+            }
+            
+    return batched_recipients, addresses
+
 def email_content(content: str, title: str) -> None:
     emails = get_email_list()
-    for email in emails:
+    recipients, addresses = _format_for_batch_send(emails)
     
-        response = requests.post(
-                    "https://api.mailgun.net/v3/rockstocks.ai/messages",
-                    auth=("api", mailgun_key),
-                    data={
-                        "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
-                        "to": f"<{email['address']}>",
-                        "subject": f"{email['name']} - {title}",
-                        "html": content
-                    }
-                )
-        logger.info(f"Mailgun response status: {response.status_code}")
-        
-        if response.ok:
-            logger.info("Email sent successfully.")
-        else:
-            logger.error(f"Failed to send email. Response: {response.text}")
+    response = requests.post(
+                "https://api.mailgun.net/v3/rockstocks.ai/messages",
+                auth=("api", mailgun_key),
+                data={
+                    "from": "Mailgun Sandbox <postmaster@rockstocks.ai>",
+                    "to": addresses,
+                    "subject": title,
+                    "html": content,
+                    "recipient-variables": json.dumps(recipients)
+                }
+            )
+    logger.info(f"Mailgun response status: {response.status_code}")
+    
+    if response.ok:
+        logger.info("Email sent successfully.")
+    else:
+        logger.error(f"Failed to send email. Response: {response.text}")
 
 def collect_for_email(max_articles: int = 10) -> None:
     logger.info("Starting email collection task")
@@ -1071,7 +1089,6 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
-                email_content(html_compiled, f"⚒ALERT: ({ticker}) {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
