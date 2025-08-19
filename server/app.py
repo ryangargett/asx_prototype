@@ -70,7 +70,7 @@ collection_id = os.getenv("WEBFLOW_COLLECTION_ID")
 num_sensitive = 0
 
 db = mongo_client["main"]
-documents = db["documents_new_4"]
+documents = db["documents_new_6"]
 stocks = db["stocks"]
 articles = db["articles"]
 metals = db["metals"]
@@ -497,7 +497,7 @@ def reset_collection(collection_id: str) -> None:
             
     if len(all_items) > 0:
         for item in tqdm(all_items, desc="Deleting items"):
-           delete_item(os.getenv("WEBFLOW_ANNOUNCEMENT_COLLECTION_ID"), item["id"])
+           delete_item(collection_id, item["id"])
     else:
         logger.warning(f"No items found in collection {collection_id} to reset")
 
@@ -928,6 +928,8 @@ def summarize_alerts() -> None:
     file = None
     screened_metals = standardize_metal_prices(metal_list, legal_metals)
     
+    logger.info("Beginning alert summary compilation...")
+    
     file = plot_results_by_commodity()
     
     if file:
@@ -1089,6 +1091,7 @@ async def format_alert(file_path: str, ticker: str, report_type: str, article_me
                 
                 compiled = mjml_to_html(mjml_src)
                 html_compiled = compiled.html
+                email_content(html_compiled, f"⚒ALERT: {results['drill_results']['title']}⚒")
                 
                 alerts.insert_one({
                     "ticker": ticker,
@@ -1241,7 +1244,7 @@ async def push_article_to_site(file_path: str, announcement_hash: str, formatted
                 if industry_group_name == "Metals and Mining":
                     industry_group_name = "Mining"
                     
-                add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url)
+                #add_to_email(generated["short_title"], generated["email_summary"], cover_image, formatted_datetime, article_url)
                 await push_to_twitter(generated["short_title"], article_url, ticker, industry_name, industry_group_name)
             
             else:
@@ -1965,7 +1968,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FastAPI application...")
     
     scheduler = AsyncIOScheduler(
-        timezone = "Australia/Sydney"
+        timezone = "Australia/Sydney",
+        job_defaults={
+        "misfire_grace_time": 600,
+        "coalesce": True,
+        "max_instances": 1,
+    },
     )
     
     scheduler.add_job(
@@ -2037,7 +2045,7 @@ async def lifespan(app: FastAPI):
         summarize_alerts,
         "cron",
         day_of_week="mon,tue,wed,thu,fri",
-        hour="9,15",
+        hour="9,12,15",
         minute=50,
         max_instances=1,
         name="summarize_alerts"
